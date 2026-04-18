@@ -1,0 +1,52 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strings"
+)
+
+type Config struct {
+	Port           string
+	DatabaseURL    string
+	RedisURL       string
+	AdminJWTSecret string
+	AllowedOrigins []string
+	LogLevel       string
+}
+
+func Load() (*Config, error) {
+	c := &Config{
+		Port:           envDefault("PORT", "3003"),
+		DatabaseURL:    os.Getenv("DATABASE_URL"),
+		RedisURL:       envDefault("REDIS_URL", "redis://redis:6379/0"),
+		AdminJWTSecret: os.Getenv("ADMIN_JWT_SECRET"),
+		AllowedOrigins: splitCSV(envDefault("ALLOWED_ORIGINS", "https://afisha.vshage.app,https://afisha-dev.vshage.app,http://localhost:5173")),
+		LogLevel:       envDefault("LOG_LEVEL", "info"),
+	}
+	if c.DatabaseURL == "" {
+		return nil, fmt.Errorf("DATABASE_URL required")
+	}
+	if c.AdminJWTSecret == "" {
+		return nil, fmt.Errorf("ADMIN_JWT_SECRET required")
+	}
+	return c, nil
+}
+
+func envDefault(k, d string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return d
+}
+
+func splitCSV(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
