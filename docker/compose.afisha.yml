@@ -1,0 +1,38 @@
+services:
+  afisha-backend:
+    image: ghcr.io/pythonjsgo/afisha-backend:${AFISHA_TAG:-dev}
+    container_name: afisha-backend
+    restart: unless-stopped
+    environment:
+      PORT: "3003"
+      DATABASE_URL: "${DATABASE_URL}"
+      REDIS_URL: "${REDIS_URL}"
+      ADMIN_JWT_SECRET: "${ADMIN_JWT_SECRET}"
+      ALLOWED_ORIGINS: "${AFISHA_ALLOWED_ORIGINS}"
+      LOG_LEVEL: "info"
+    networks:
+      - vshage
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3003/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  afisha-frontend:
+    image: ghcr.io/pythonjsgo/afisha-frontend:${AFISHA_TAG:-dev}
+    container_name: afisha-frontend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOST: "0.0.0.0"
+      ORIGIN: "${AFISHA_ORIGIN}"
+      BACKEND_INTERNAL_URL: "http://afisha-backend:3003"
+    networks:
+      - vshage
+    depends_on:
+      - afisha-backend
+
+networks:
+  vshage:
+    external: true
