@@ -1,0 +1,25 @@
+name: deploy-dev
+
+on:
+  workflow_run:
+    workflows: ["backend-ci", "frontend-ci"]
+    types: [completed]
+    branches: [dev]
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 47.237.121.70
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY_DEV }}
+          script: |
+            cd /opt/vshage-compose
+            docker compose pull afisha-backend afisha-frontend
+            docker compose up -d afisha-backend afisha-frontend
+            docker compose ps afisha-backend afisha-frontend
