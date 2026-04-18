@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+/frontend/.svelte-kit/
+/frontend/build/
+/frontend/.env*
+!frontend/.env.example
+
+# Go
+/backend/server
+/backend/*.test
+/backend/coverage.out
+/backend/.env*
+!backend/.env.example
+
+# Editors
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Claude/AI
+.superpowers/
+.claude/settings.local.json
