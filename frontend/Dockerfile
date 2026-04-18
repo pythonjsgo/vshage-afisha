@@ -16,6 +16,7 @@ WORKDIR /app
 ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/build ./build
+COPY --from=builder /app/static ./static
 COPY package.json ./
 EXPOSE 3000
 CMD ["node", "build"]
