@@ -6,6 +6,7 @@
   import ShareSheet from './ShareSheet.svelte';
   import AppCTA from './AppCTA.svelte';
   import LiveCounter from './LiveCounter.svelte';
+  import EventGallery from './EventGallery.svelte';
 
   let { event, origin }: { event: PublicEvent; origin: string } = $props();
   const url = $derived(`${origin}/${event.id}`);
@@ -26,6 +27,10 @@
       </div>
     </div>
   </header>
+
+  {#if event.photos && event.photos.length > 0}
+    <EventGallery photos={event.photos} />
+  {/if}
 
   <section class="info">
     <div class="row"><div class="k">КОГДА</div><div class="v">{formatEventDateLong(event.start_time)}</div></div>

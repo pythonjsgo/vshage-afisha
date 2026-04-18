@@ -25,7 +25,12 @@ const selectCols = `
 	          WHERE r.event_id = e.id AND r.status = 'confirmed'), 0),
 	f.position IS NOT NULL,
 	f.position,
-	p.name, p.photo_url
+	p.name, p.photo_url,
+	COALESCE(ARRAY(
+		SELECT url FROM afisha_event_photos
+		WHERE event_id = e.id
+		ORDER BY position ASC
+	), ARRAY[]::TEXT[])
 `
 
 // Joins referenced by selectCols. Used by every SELECT in this file.
@@ -94,7 +99,7 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*PublicEvent, erro
 	if err := rows.Scan(&ev.ID, &ev.Title, &ev.Description, &ev.Location, &ev.StartTime, &ev.EndTime,
 		&ev.Status, &ev.Category, &ev.Tags,
 		&ev.MaxAttendees, &ev.PhotoURL, &ev.AttendeeCount, &ev.IsFeatured, &ev.FeaturedPosition,
-		&ev.OrganizerName, &ev.OrganizerPhoto); err != nil {
+		&ev.OrganizerName, &ev.OrganizerPhoto, &ev.Photos); err != nil {
 		return nil, err
 	}
 	return &ev, nil
@@ -112,7 +117,7 @@ func (r *Repository) query(ctx context.Context, sql string, args ...any) ([]Publ
 		if err := rows.Scan(&ev.ID, &ev.Title, &ev.Description, &ev.Location, &ev.StartTime, &ev.EndTime,
 			&ev.Status, &ev.Category, &ev.Tags,
 			&ev.MaxAttendees, &ev.PhotoURL, &ev.AttendeeCount, &ev.IsFeatured, &ev.FeaturedPosition,
-			&ev.OrganizerName, &ev.OrganizerPhoto); err != nil {
+			&ev.OrganizerName, &ev.OrganizerPhoto, &ev.Photos); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				continue
 			}

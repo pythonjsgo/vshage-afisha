@@ -22,6 +22,7 @@ type PublicEvent struct {
 	FeaturedPosition *int            `json:"featured_position,omitempty"`
 	OrganizerName    *string         `json:"organizer_name,omitempty"`
 	OrganizerPhoto   *string         `json:"organizer_photo,omitempty"`
+	Photos           []string        `json:"photos"`
 }
 
 type ListQuery struct {

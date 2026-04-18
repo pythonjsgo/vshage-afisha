@@ -15,6 +15,7 @@ export interface PublicEvent {
   featured_position?: number;
   organizer_name?: string;
   organizer_photo?: string;
+  photos?: string[];
 }
 
 export interface ListResult {
