@@ -13,6 +13,8 @@ export interface PublicEvent {
   status: 'published' | 'cancelled' | 'draft';
   is_featured: boolean;
   featured_position?: number;
+  organizer_name?: string;
+  organizer_photo?: string;
 }
 
 export interface ListResult {

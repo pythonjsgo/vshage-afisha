@@ -21,3 +21,4 @@ node_modules/
 # Claude/AI
 .superpowers/
 .claude/settings.local.json
+.claude/

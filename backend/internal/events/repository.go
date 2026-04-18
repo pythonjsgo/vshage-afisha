@@ -24,7 +24,14 @@ const selectCols = `
 	COALESCE((SELECT COUNT(*) FROM event_registrations r
 	          WHERE r.event_id = e.id AND r.status = 'confirmed'), 0),
 	f.position IS NOT NULL,
-	f.position
+	f.position,
+	p.name, p.photo_url
+`
+
+// Joins referenced by selectCols. Used by every SELECT in this file.
+const selectFrom = `
+	FROM events e
+	LEFT JOIN profiles p ON p.id = e.organizer_id
 `
 
 func (r *Repository) List(ctx context.Context, q ListQuery) (ListResult, error) {
@@ -34,8 +41,7 @@ func (r *Repository) List(ctx context.Context, q ListQuery) (ListResult, error) 
 	}
 
 	featured, err := r.query(ctx, `
-		SELECT `+selectCols+`
-		FROM events e
+		SELECT `+selectCols+selectFrom+`
 		INNER JOIN afisha_featured f ON f.event_id = e.id
 		WHERE e.status = 'published' AND e.start_time >= $1
 		ORDER BY f.position ASC, e.start_time ASC
@@ -50,8 +56,7 @@ func (r *Repository) List(ctx context.Context, q ListQuery) (ListResult, error) 
 		limit = 30
 	}
 	all, err := r.query(ctx, `
-		SELECT `+selectCols+`
-		FROM events e
+		SELECT `+selectCols+selectFrom+`
 		LEFT JOIN afisha_featured f ON f.event_id = e.id
 		WHERE e.status = 'published' AND e.start_time >= $1
 		ORDER BY e.start_time ASC
@@ -74,8 +79,7 @@ func (r *Repository) List(ctx context.Context, q ListQuery) (ListResult, error) 
 
 func (r *Repository) GetByID(ctx context.Context, id string) (*PublicEvent, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT `+selectCols+`
-		FROM events e
+		SELECT `+selectCols+selectFrom+`
 		LEFT JOIN afisha_featured f ON f.event_id = e.id
 		WHERE e.id = $1 AND e.status = 'published'
 	`, id)
@@ -89,7 +93,8 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*PublicEvent, erro
 	var ev PublicEvent
 	if err := rows.Scan(&ev.ID, &ev.Title, &ev.Description, &ev.Location, &ev.StartTime, &ev.EndTime,
 		&ev.Status, &ev.Category, &ev.Tags,
-		&ev.MaxAttendees, &ev.PhotoURL, &ev.AttendeeCount, &ev.IsFeatured, &ev.FeaturedPosition); err != nil {
+		&ev.MaxAttendees, &ev.PhotoURL, &ev.AttendeeCount, &ev.IsFeatured, &ev.FeaturedPosition,
+		&ev.OrganizerName, &ev.OrganizerPhoto); err != nil {
 		return nil, err
 	}
 	return &ev, nil
@@ -106,7 +111,8 @@ func (r *Repository) query(ctx context.Context, sql string, args ...any) ([]Publ
 		var ev PublicEvent
 		if err := rows.Scan(&ev.ID, &ev.Title, &ev.Description, &ev.Location, &ev.StartTime, &ev.EndTime,
 			&ev.Status, &ev.Category, &ev.Tags,
-			&ev.MaxAttendees, &ev.PhotoURL, &ev.AttendeeCount, &ev.IsFeatured, &ev.FeaturedPosition); err != nil {
+			&ev.MaxAttendees, &ev.PhotoURL, &ev.AttendeeCount, &ev.IsFeatured, &ev.FeaturedPosition,
+			&ev.OrganizerName, &ev.OrganizerPhoto); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				continue
 			}

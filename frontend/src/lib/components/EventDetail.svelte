@@ -32,6 +32,19 @@
     {#if event.location}
       <div class="row"><div class="k">ГДЕ</div><div class="v">{event.location}</div></div>
     {/if}
+    {#if event.organizer_name}
+      <div class="row organizer-row">
+        <div class="k">ОРГАНИЗАТОР</div>
+        <div class="v organizer">
+          {#if event.organizer_photo}
+            <img class="avatar" src={event.organizer_photo} alt={event.organizer_name} />
+          {:else}
+            <span class="avatar ph">{event.organizer_name.charAt(0).toUpperCase()}</span>
+          {/if}
+          <span>{event.organizer_name}</span>
+        </div>
+      </div>
+    {/if}
     {#if event.attendee_count > 0}
       <div class="row"><div class="k">КТО ИДЁТ</div><div class="v"><LiveCounter value={event.attendee_count} label="идут" /></div></div>
     {/if}
@@ -69,7 +82,14 @@
   .info { padding: var(--sp-4); display: flex; flex-direction: column; gap: 0; }
   .row { display: flex; justify-content: space-between; padding: var(--sp-3) 0; border-bottom: 1px solid var(--border); font-size: 12px; }
   .row .k { color: var(--mute); letter-spacing: 1.5px; font-size: 10px; text-transform: uppercase; }
-  .desc { padding: 0 var(--sp-4) var(--sp-4); font-size: 13px; line-height: 1.6; color: #ccc; }
+  .organizer { display: flex; align-items: center; gap: var(--sp-2); }
+  .avatar {
+    width: 24px; height: 24px; border-radius: 50%; object-fit: cover;
+    background: var(--bg-elev); border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700; color: var(--accent-pink);
+  }
+  .desc { padding: 0 var(--sp-4) var(--sp-4); font-size: 13px; line-height: 1.7; color: #ccc; white-space: pre-line; }
   .share-sec, .cta-sec { padding: var(--sp-3) var(--sp-4); }
   .section-label { font-size: 10px; letter-spacing: 2px; color: var(--accent-green); margin-bottom: var(--sp-2); }
 </style>

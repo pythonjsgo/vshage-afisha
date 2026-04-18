@@ -30,6 +30,9 @@
         <span class="att">· {event.attendee_count} идут</span>
       {/if}
     </div>
+    {#if event.organizer_name}
+      <div class="org">by {event.organizer_name}</div>
+    {/if}
   </div>
 </a>
 
@@ -77,4 +80,11 @@
   }
   .meta { font-size: 11px; color: var(--mute); }
   .date { color: var(--accent-green); }
+  .org {
+    font-size: 10px;
+    color: var(--mute);
+    opacity: 0.6;
+    letter-spacing: 0.5px;
+    margin-top: 2px;
+  }
 </style>
