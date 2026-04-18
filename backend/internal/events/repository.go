@@ -19,7 +19,7 @@ func NewRepository(p *pgxpool.Pool) *Repository {
 
 const selectCols = `
 	e.id, e.title, e.description, e.location, e.start_time, e.end_time,
-	e.organizer_id, e.status, e.category, COALESCE(e.tags, '[]'::jsonb),
+	e.status, e.category, COALESCE(e.tags, '[]'::jsonb),
 	e.max_attendees, e.photo_url,
 	COALESCE((SELECT COUNT(*) FROM event_registrations r
 	          WHERE r.event_id = e.id AND r.status = 'confirmed'), 0),
@@ -87,9 +87,8 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*PublicEvent, erro
 		return nil, pgx.ErrNoRows
 	}
 	var ev PublicEvent
-	var orgID string
 	if err := rows.Scan(&ev.ID, &ev.Title, &ev.Description, &ev.Location, &ev.StartTime, &ev.EndTime,
-		&orgID, &ev.Status, &ev.Category, &ev.Tags,
+		&ev.Status, &ev.Category, &ev.Tags,
 		&ev.MaxAttendees, &ev.PhotoURL, &ev.AttendeeCount, &ev.IsFeatured, &ev.FeaturedPosition); err != nil {
 		return nil, err
 	}
@@ -105,9 +104,8 @@ func (r *Repository) query(ctx context.Context, sql string, args ...any) ([]Publ
 	out := make([]PublicEvent, 0, 16)
 	for rows.Next() {
 		var ev PublicEvent
-		var orgID string
 		if err := rows.Scan(&ev.ID, &ev.Title, &ev.Description, &ev.Location, &ev.StartTime, &ev.EndTime,
-			&orgID, &ev.Status, &ev.Category, &ev.Tags,
+			&ev.Status, &ev.Category, &ev.Tags,
 			&ev.MaxAttendees, &ev.PhotoURL, &ev.AttendeeCount, &ev.IsFeatured, &ev.FeaturedPosition); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				continue

@@ -3,6 +3,7 @@ package events
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -33,6 +34,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.repo.List(ctx, ListQuery{Limit: limit, Offset: offset})
 	if err != nil {
+		log.Printf("events.List: %v", err)
 		writeError(w, http.StatusInternalServerError, "list failed")
 		return
 	}
@@ -59,6 +61,7 @@ func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "event not found")
 			return
 		}
+		log.Printf("events.GetByID(%s): %v", id, err)
 		writeError(w, http.StatusInternalServerError, "get failed")
 		return
 	}
