@@ -4,9 +4,9 @@
   import MetaPill from './MetaPill.svelte';
 
   let { event }: { event: PublicEvent } = $props();
-  const href = `/${event.id}`;
-  const cancelled = event.status === 'cancelled';
-  const category = event.category?.toUpperCase() ?? '';
+  const href = $derived(`/${event.id}`);
+  const cancelled = $derived(event.status === 'cancelled');
+  const category = $derived(event.category?.toUpperCase() ?? '');
 </script>
 
 <a {href} class="card" class:cancelled>
