@@ -1,6 +1,7 @@
 export interface PublicEvent {
   id: string;
   title: string;
+  short_description?: string;
   description?: string;
   location?: string;
   start_time: string; // ISO
@@ -11,6 +12,19 @@ export interface PublicEvent {
   attendee_count: number;
   photo_url?: string;
   status: 'published' | 'cancelled' | 'draft';
+  registration_mode?: 'auto' | 'manual' | 'external';
+  external_registration_url?: string;
+  registration_deadline?: string;
+  price_type?: 'free' | 'paid' | 'donation';
+  price_min?: number;
+  price_max?: number;
+  currency?: string;
+  city?: string;
+  venue_name?: string;
+  address?: string;
+  online_url?: string;
+  age_limit?: string;
+  attendees_note?: string;
   is_featured: boolean;
   featured_position?: number;
   organizer_name?: string;

@@ -12,6 +12,7 @@
   const url = $derived(`${origin}/${event.id}`);
   const cancelled = $derived(event.status === 'cancelled');
   const category = $derived(event.category?.toUpperCase() ?? '');
+  const externalRegistration = $derived(event.registration_mode === 'external' && event.external_registration_url);
 </script>
 
 <article class="detail" class:cancelled>
@@ -64,6 +65,14 @@
     <ShareSheet {url} title={event.title} />
   </section>
 
+  <section class="register-sec">
+    {#if externalRegistration}
+      <a class="register-btn" href={event.external_registration_url} target="_blank" rel="noreferrer">ЗАРЕГИСТРИРОВАТЬСЯ</a>
+    {:else}
+      <a class="register-btn" href={`/events/${event.id}/register`}>ЗАРЕГИСТРИРОВАТЬСЯ</a>
+    {/if}
+  </section>
+
   <section class="cta-sec">
     <AppCTA eventId={event.id} />
   </section>
@@ -95,6 +104,21 @@
     font-size: 10px; font-weight: 700; color: var(--accent-pink);
   }
   .desc { padding: 0 var(--sp-4) var(--sp-4); font-size: 13px; line-height: 1.7; color: #ccc; white-space: pre-line; }
-  .share-sec, .cta-sec { padding: var(--sp-3) var(--sp-4); }
+  .share-sec, .register-sec, .cta-sec { padding: var(--sp-3) var(--sp-4); }
   .section-label { font-size: 10px; letter-spacing: 2px; color: var(--accent-green); margin-bottom: var(--sp-2); }
+  .register-btn {
+    display: block;
+    width: 100%;
+    padding: var(--sp-3);
+    background: var(--accent-green);
+    color: #000;
+    border: none;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-align: center;
+    transition: background var(--dur-fast);
+  }
+  .register-btn:hover { background: var(--accent-pink); }
 </style>

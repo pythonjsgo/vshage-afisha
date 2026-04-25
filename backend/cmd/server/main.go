@@ -52,6 +52,7 @@ func main() {
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/events", evHandler.List)
 		r.Get("/events/{id}", evHandler.GetByID)
+		r.Post("/events/{id}/registrations", evHandler.RegisterPublic)
 
 		r.Route("/admin", func(r chi.Router) {
 			r.Use(admin.AuthMiddleware(cfg.AdminJWTSecret))

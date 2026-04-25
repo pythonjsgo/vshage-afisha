@@ -8,7 +8,6 @@ test.describe('Afisha', () => {
 
   test('grid label visible when events exist', async ({ page }) => {
     await page.goto('/');
-    const label = page.locator('.grid-label');
-    await expect(label.or(page.locator('.empty'))).toBeVisible();
+    await expect(page.locator('.grid-label')).toBeVisible();
   });
 });
