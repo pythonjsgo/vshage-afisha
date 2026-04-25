@@ -18,6 +18,13 @@
   );
   const eventStarted = $derived(Date.now() > new Date(event.start_time).getTime());
   const registrationClosed = $derived(deadlinePassed || eventStarted);
+  const registrationClosedReason = $derived(
+    eventStarted
+      ? 'Событие уже началось. Регистрация закрыта.'
+      : event.registration_deadline && deadlinePassed
+        ? `Дедлайн регистрации прошёл: ${formatEventDateLong(event.registration_deadline)}.`
+        : 'Регистрация закрыта.'
+  );
   const external = $derived(event.registration_mode === 'external' && event.external_registration_url);
   const venue = $derived([event.venue_name, event.address || event.location].filter(Boolean).join(' · '));
   const price = $derived(formatPrice(event.price_type, event.price_min, event.price_max, event.currency));
@@ -94,7 +101,7 @@
     {:else if soldOut}
       <div class="notice warn">Свободных мест больше нет.</div>
     {:else if registrationClosed}
-      <div class="notice warn">Регистрация закрыта.</div>
+      <div class="notice warn">{registrationClosedReason}</div>
     {:else}
       {#if form?.success}
         <div class="notice ok">

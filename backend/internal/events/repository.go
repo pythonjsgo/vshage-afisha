@@ -58,7 +58,9 @@ func (r *Repository) List(ctx context.Context, q ListQuery) (ListResult, error) 
 	featured, err := r.query(ctx, `
 		SELECT `+selectCols+selectFrom+`
 		INNER JOIN afisha_featured f ON f.event_id = e.id
-		WHERE e.status = 'published' AND e.start_time >= $1
+		WHERE e.status = 'published'
+		  AND e.start_time >= $1
+		  AND COALESCE(d.visibility, 'public') = 'public'
 		ORDER BY f.position ASC, e.start_time ASC
 		LIMIT 10
 	`, since)
@@ -73,7 +75,9 @@ func (r *Repository) List(ctx context.Context, q ListQuery) (ListResult, error) 
 	all, err := r.query(ctx, `
 		SELECT `+selectCols+selectFrom+`
 		LEFT JOIN afisha_featured f ON f.event_id = e.id
-		WHERE e.status = 'published' AND e.start_time >= $1
+		WHERE e.status = 'published'
+		  AND e.start_time >= $1
+		  AND COALESCE(d.visibility, 'public') = 'public'
 		ORDER BY e.start_time ASC
 		LIMIT $2 OFFSET $3
 	`, since, limit, q.Offset)
@@ -83,8 +87,12 @@ func (r *Repository) List(ctx context.Context, q ListQuery) (ListResult, error) 
 
 	var total int
 	if err := r.pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM events
-		WHERE status = 'published' AND start_time >= $1
+		SELECT COUNT(*)
+		FROM events e
+		LEFT JOIN organizer_event_details d ON d.event_id = e.id
+		WHERE e.status = 'published'
+		  AND e.start_time >= $1
+		  AND COALESCE(d.visibility, 'public') = 'public'
 	`, since).Scan(&total); err != nil {
 		return ListResult{}, err
 	}
@@ -96,7 +104,9 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*PublicEvent, erro
 	rows, err := r.pool.Query(ctx, `
 		SELECT `+selectCols+selectFrom+`
 		LEFT JOIN afisha_featured f ON f.event_id = e.id
-		WHERE e.id = $1 AND e.status = 'published'
+		WHERE e.id = $1
+		  AND e.status = 'published'
+		  AND COALESCE(d.visibility, 'public') = 'public'
 	`, id)
 	if err != nil {
 		return nil, err
@@ -141,6 +151,7 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 		StartTime    time.Time
 		MaxAttendees *int
 		RegMode      string
+		Visibility   string
 		ExternalURL  *string
 		Deadline     *time.Time
 		Registered   int
@@ -149,6 +160,7 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 		SELECT
 			e.id, e.status, e.start_time, e.max_attendees,
 			COALESCE(d.registration_mode, 'auto'),
+			COALESCE(d.visibility, 'public'),
 			d.external_registration_url,
 			d.registration_deadline,
 			(SELECT count(*)::int FROM event_registrations er
@@ -157,7 +169,7 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 		LEFT JOIN organizer_event_details d ON d.event_id = e.id
 		WHERE e.id = $1
 		FOR UPDATE OF e
-	`, eventID).Scan(&ev.ID, &ev.Status, &ev.StartTime, &ev.MaxAttendees, &ev.RegMode, &ev.ExternalURL, &ev.Deadline, &ev.Registered)
+	`, eventID).Scan(&ev.ID, &ev.Status, &ev.StartTime, &ev.MaxAttendees, &ev.RegMode, &ev.Visibility, &ev.ExternalURL, &ev.Deadline, &ev.Registered)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, &RegistrationError{Status: http.StatusNotFound, Code: "event_not_found", Message: "Событие не найдено"}
@@ -166,6 +178,9 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 	}
 	if ev.Status != "published" {
 		return nil, &RegistrationError{Status: http.StatusConflict, Code: "registration_unavailable", Message: "Регистрация на это событие недоступна"}
+	}
+	if ev.Visibility != "public" {
+		return nil, &RegistrationError{Status: http.StatusNotFound, Code: "event_not_found", Message: "Событие не найдено"}
 	}
 	if ev.RegMode == "external" {
 		return nil, &RegistrationError{Status: http.StatusConflict, Code: "external_registration", Message: "Регистрация проходит на внешней странице", ExternalURL: ev.ExternalURL}
