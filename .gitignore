@@ -20,5 +20,7 @@ node_modules/
 
 # Claude/AI
 .superpowers/
+# Track .claude/{skills,agents,hooks,settings.json,rules,CLAUDE.md} but NOT
+# per-machine state and worktrees:
 .claude/settings.local.json
-.claude/
+.claude/worktrees/
