@@ -40,11 +40,14 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v6
         with:
           context: frontend
           platforms: linux/amd64
           push: true
+          cache-from: type=registry,ref=ghcr.io/pythonjsgo/afisha-frontend:buildcache
+          cache-to: type=registry,ref=ghcr.io/pythonjsgo/afisha-frontend:buildcache,mode=max
+          provenance: false
           tags: |
             ghcr.io/pythonjsgo/afisha-frontend:${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
             ghcr.io/pythonjsgo/afisha-frontend:${{ github.sha }}

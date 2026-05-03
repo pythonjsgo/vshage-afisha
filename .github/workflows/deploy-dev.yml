@@ -5,21 +5,42 @@ on:
     workflows: ["backend-ci", "frontend-ci"]
     types: [completed]
     branches: [dev]
+  workflow_dispatch:
+
+concurrency:
+  group: afisha-deploy-dev
+  cancel-in-progress: true
 
 jobs:
   deploy:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    environment: dev
     steps:
-      - uses: actions/checkout@v4
-      - name: SSH deploy
+      - name: Pull + restart afisha-{backend,frontend} on Senko dev
         uses: appleboy/ssh-action@v1
         with:
-          host: 47.237.121.70
+          host: 91.132.163.213
           username: root
-          key: ${{ secrets.SSH_PRIVATE_KEY_DEV }}
+          key: ${{ secrets.DEV_SSH_KEY }}
           script: |
-            cd /opt/vshage-afisha
-            docker compose pull
-            docker compose up -d --remove-orphans
-            docker compose ps
+            set -e
+            cd /opt/vshage-dev/compose
+            export COMPOSE_FILE=docker-compose.yml:docker-compose.dev.yml
+            sed -i 's|^AFISHA_BACKEND_TAG=.*|AFISHA_BACKEND_TAG=dev|'   .env
+            sed -i 's|^AFISHA_FRONTEND_TAG=.*|AFISHA_FRONTEND_TAG=dev|' .env
+            docker compose --profile edge pull -q afisha-backend afisha-frontend
+            docker compose --profile edge up -d afisha-backend afisha-frontend
+
+      - name: Smoke afisha.dev.vshage.app
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 4 https://afisha.dev.vshage.app/api/healthz >/dev/null && \
+               curl -fsS --max-time 4 https://afisha.dev.vshage.app/ >/dev/null; then
+              echo "✓ afisha ok after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "✗ afisha never came back" >&2
+          exit 1
