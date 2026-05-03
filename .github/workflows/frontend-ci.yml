@@ -48,6 +48,12 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/pythonjsgo/afisha-frontend:buildcache
           cache-to: type=registry,ref=ghcr.io/pythonjsgo/afisha-frontend:buildcache,mode=max
           provenance: false
+          # PUBLIC_API_URL is baked in at build time by Vite. Browser fetches
+          # use it directly (so it must be a public URL, not docker network).
+          # SvelteKit SSR also reads it; with the absolute URL the same image
+          # works in node-adapter mode without ORIGIN gymnastics.
+          build-args: |
+            PUBLIC_API_URL=${{ github.ref == 'refs/heads/main' && 'https://afisha.vshage.app/api' || 'https://afisha.dev.vshage.app/api' }}
           tags: |
             ghcr.io/pythonjsgo/afisha-frontend:${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
             ghcr.io/pythonjsgo/afisha-frontend:${{ github.sha }}
