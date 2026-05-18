@@ -17,16 +17,17 @@ jobs:
     runs-on: ubuntu-latest
     environment: dev
     steps:
-      - name: Pull + restart afisha-{backend,frontend} on Senko dev
+      - name: Pull + restart afisha-{backend,frontend} on the DEV host
         uses: appleboy/ssh-action@v1
         with:
-          host: 91.132.163.213
+          # DEV host (1cent / Finland). The old Senko 91.132.163.213 was
+          # abandoned 2026-05-09 after a network-edge blackhole.
+          host: 64.188.80.28
           username: root
           key: ${{ secrets.DEV_SSH_KEY }}
           script: |
             set -e
             cd /opt/vshage-dev/compose
-            export COMPOSE_FILE=docker-compose.yml:docker-compose.dev.yml
             sed -i 's|^AFISHA_BACKEND_TAG=.*|AFISHA_BACKEND_TAG=dev|'   .env
             sed -i 's|^AFISHA_FRONTEND_TAG=.*|AFISHA_FRONTEND_TAG=dev|' .env
             docker compose --profile edge pull -q afisha-backend afisha-frontend
@@ -35,7 +36,7 @@ jobs:
       - name: Smoke afisha.dev.vshage.app
         run: |
           for i in $(seq 1 30); do
-            if curl -fsS --max-time 4 https://afisha.dev.vshage.app/api/healthz >/dev/null && \
+            if curl -fsS --max-time 4 https://afisha.dev.vshage.app/api/events >/dev/null && \
                curl -fsS --max-time 4 https://afisha.dev.vshage.app/ >/dev/null; then
               echo "✓ afisha ok after ${i}s"
               exit 0
