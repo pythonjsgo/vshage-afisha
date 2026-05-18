@@ -35,7 +35,7 @@ func main() {
 	// runner for local stands where the schema is provisioned out-of-band.
 	if os.Getenv("SKIP_MIGRATIONS") == "1" {
 		log.Print("SKIP_MIGRATIONS=1 set; skipping migration runner")
-	} else if err := db.RunMigrations(ctx, pool, db.FindMigrationsDir()); err != nil {
+	} else if err := db.RunMigrations(ctx, pool, db.MigrationService, db.FindMigrationsDir()); err != nil {
 		log.Fatalf("run migrations: %v", err)
 	}
 

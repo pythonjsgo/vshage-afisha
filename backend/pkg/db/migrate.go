@@ -17,9 +17,21 @@ import (
 // migration runs inside its own transaction. Idempotent: re-running is a
 // no-op once a migration is recorded.
 //
-// This mirrors core-api's runner so the schema-migration mechanism is the
-// same across the Вшаге Go services.
-func RunMigrations(ctx context.Context, pool *pgxpool.Pool, migrationsDir string) error {
+// service namespaces the recorded version: a migration file 001_init.sql is
+// tracked as "<service>/001_init.sql". The Вшаге services (core-api,
+// organizer-api, afisha-backend) share one Postgres database and therefore
+// one schema_migrations table. Without the prefix, two services with a
+// same-numbered file (e.g. core-api's 001_initial.sql vs afisha's
+// 001_init.sql) would risk silently skipping each other's migrations; the
+// prefix keeps each service's rows in their own namespace.
+//
+// The runner mechanism otherwise mirrors core-api's so the schema-migration
+// approach is consistent across the Go services.
+func RunMigrations(ctx context.Context, pool *pgxpool.Pool, service, migrationsDir string) error {
+	if service == "" {
+		return fmt.Errorf("migrations: service prefix must not be empty")
+	}
+
 	entries, err := os.ReadDir(migrationsDir)
 	if err != nil {
 		return fmt.Errorf("read migrations dir %q: %w", migrationsDir, err)
@@ -46,7 +58,10 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool, migrationsDir string
 	}
 	sort.Strings(names)
 
-	for _, version := range names {
+	for _, name := range names {
+		// version is what we record + look up; name is the file on disk.
+		version := service + "/" + name
+
 		var exists bool
 		if err := pool.QueryRow(ctx,
 			"SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)", version,
@@ -57,7 +72,7 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool, migrationsDir string
 			continue
 		}
 
-		sqlBytes, err := os.ReadFile(filepath.Join(migrationsDir, version))
+		sqlBytes, err := os.ReadFile(filepath.Join(migrationsDir, name))
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", version, err)
 		}
@@ -87,6 +102,9 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool, migrationsDir string
 	}
 	return nil
 }
+
+// MigrationService is the schema_migrations version prefix for afisha-backend.
+const MigrationService = "afisha"
 
 // FindMigrationsDir locates the migrations directory. It first tries a path
 // relative to this source file (works with `go run` and `go test`), then a
