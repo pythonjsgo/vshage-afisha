@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -29,6 +30,14 @@ func main() {
 		log.Fatal(err)
 	}
 	defer pool.Close()
+
+	// Apply DB migrations before serving. SKIP_MIGRATIONS=1 bypasses the
+	// runner for local stands where the schema is provisioned out-of-band.
+	if os.Getenv("SKIP_MIGRATIONS") == "1" {
+		log.Print("SKIP_MIGRATIONS=1 set; skipping migration runner")
+	} else if err := db.RunMigrations(ctx, pool, db.FindMigrationsDir()); err != nil {
+		log.Fatalf("run migrations: %v", err)
+	}
 
 	cache, err := events.NewCache(cfg.RedisURL)
 	if err != nil {

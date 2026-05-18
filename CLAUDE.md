@@ -27,8 +27,12 @@ afisha-frontend (SvelteKit 2)  ──→  afisha-backend (Go :3004)  ──→  
 
 | Env | Domain | Branch trigger |
 |-----|--------|----------------|
-| DEV | https://afisha.vshage.app/ (s2 host) | `dev` (default) |
-| PROD | (not yet — first PROD deploy: `main` + manual approval) | `main` |
+| DEV | https://afisha.dev.vshage.app/ (Senko-dev) | `dev` (default) — CI auto-deploys |
+| PROD | https://afisha.vshage.app/ — **live since 2026-05-18** | `main` (no auto-deploy pipeline yet — see umbrella) |
+
+> PROD `.env` pins `AFISHA_*_TAG` to an exact image sha (not the moving `:dev`
+> tag). Promoting a new build to PROD is currently a manual step until a
+> `main`→PROD deploy workflow lands.
 
 ## CI/CD (per-repo, working today)
 

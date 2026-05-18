@@ -9,6 +9,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /out/serv
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata
 COPY --from=builder /out/server /usr/local/bin/server
+# Migrations are applied on startup (see cmd/server/main.go). FindMigrationsDir
+# resolves /pkg/db/migrations when the binary runs with CWD=/.
+COPY --from=builder /src/pkg/db/migrations /pkg/db/migrations
 EXPOSE 3003
 ENV PORT=3003
 CMD ["/usr/local/bin/server"]
