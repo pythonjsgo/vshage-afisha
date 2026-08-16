@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"log"
 	"net/http"
 	"os"
@@ -14,9 +16,23 @@ import (
 	"github.com/pythonjsgo/vshage-afisha/internal/config"
 	"github.com/pythonjsgo/vshage-afisha/internal/events"
 	"github.com/pythonjsgo/vshage-afisha/internal/health"
+	"github.com/pythonjsgo/vshage-afisha/internal/webreg"
 	"github.com/pythonjsgo/vshage-afisha/pkg/db"
 	"github.com/pythonjsgo/vshage-afisha/pkg/middleware"
 )
+
+// randomSalt produces an ephemeral IP-hash salt when none is configured.
+func randomSalt() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand failing is fatal for anything security-adjacent; here
+		// the salt only anonymises abuse-triage hashes, so degrade loudly
+		// rather than refusing to boot the whole events board.
+		log.Printf("webreg: crypto/rand unavailable for IP salt: %v", err)
+		return "webreg-fallback-salt"
+	}
+	return hex.EncodeToString(b)
+}
 
 func main() {
 	cfg, err := config.Load()
@@ -48,6 +64,20 @@ func main() {
 	evHandler := events.NewHandler(evRepo, cache)
 	adminHandler := admin.NewHandler(pool)
 
+	// Web registration (vshage.app/e/<slug>) — self-contained module, own
+	// tables, no dependency on the shared events schema.
+	ipSalt := cfg.WebregIPSalt
+	if ipSalt == "" {
+		ipSalt = randomSalt()
+		log.Print("webreg: WEBREG_IP_SALT unset — using an ephemeral per-process salt")
+	}
+	if cfg.WebregAdminToken == "" {
+		log.Print("webreg: WEBREG_ADMIN_TOKEN unset — event config endpoint is disabled")
+	}
+	submitLog := webreg.NewSubmitLog(cfg.WebregLogPath)
+	defer func() { _ = submitLog.Close() }()
+	webregHandler := webreg.NewHandler(webreg.NewRepository(pool, ipSalt), cfg.WebregAdminToken, submitLog)
+
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
@@ -58,10 +88,28 @@ func main() {
 
 	r.Get("/healthz", health.Handler())
 
+	// Deliberately loose per-IP cap on the anonymous WRITE surface only — see
+	// the calibration note on middleware.RateLimit. 1 rps sustained, burst 20.
+	//
+	// Reads are deliberately NOT limited. The event page is rendered by
+	// afisha-frontend, so every read reaching this backend arrives from one
+	// container address: a per-IP limiter on reads would throttle the entire
+	// page for everyone the moment an announcement lands — the exact failure
+	// the limiter exists to prevent. The frontend forwards the visitor's
+	// address on writes (X-Forwarded-For), which is what makes the per-IP
+	// bucket mean anything at all.
+	webregLimit := middleware.RateLimit(1, 20)
+
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/events", evHandler.List)
 		r.Get("/events/{id}", evHandler.GetByID)
 		r.Post("/events/{id}/registrations", evHandler.RegisterPublic)
+
+		// Web registration: /api/e/{slug}, /api/e/{slug}/register, …
+		r.Route("/e", func(r chi.Router) {
+			webregHandler.Routes(r, webregLimit)
+		})
+		r.Route("/webreg/admin", webregHandler.AdminRoutes)
 
 		r.Route("/admin", func(r chi.Router) {
 			r.Use(admin.AuthMiddleware(cfg.AdminJWTSecret))

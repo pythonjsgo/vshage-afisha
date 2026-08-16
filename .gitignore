@@ -12,6 +12,11 @@ node_modules/
 /backend/.env*
 !backend/.env.example
 
+# Test artefacts
+/frontend/test-results/
+/frontend/playwright-report/
+/frontend/.playwright-mcp/
+
 # Editors
 .idea/
 .vscode/

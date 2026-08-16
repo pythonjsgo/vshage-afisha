@@ -13,6 +13,20 @@ type Config struct {
 	AdminJWTSecret string
 	AllowedOrigins []string
 	LogLevel       string
+
+	// Web registration (vshage.app/e/<slug>).
+	//
+	// WebregAdminToken gates event-config upserts. Left empty the admin
+	// endpoint refuses every request — fail closed, so a stand that forgot
+	// the secret cannot be reconfigured by anyone who finds the URL.
+	WebregAdminToken string
+	// WebregLogPath optionally mirrors submissions to a file; stdout always
+	// gets them regardless.
+	WebregLogPath string
+	// WebregIPSalt salts stored IP hashes. Empty ⇒ a random per-process salt
+	// (hashes then stop being comparable across restarts, which is fine —
+	// they only serve abuse triage, never identification).
+	WebregIPSalt string
 }
 
 func Load() (*Config, error) {
@@ -23,6 +37,10 @@ func Load() (*Config, error) {
 		AdminJWTSecret: os.Getenv("ADMIN_JWT_SECRET"),
 		AllowedOrigins: splitCSV(envDefault("ALLOWED_ORIGINS", "https://afisha.vshage.app,https://afisha-dev.vshage.app,http://localhost:5173")),
 		LogLevel:       envDefault("LOG_LEVEL", "info"),
+
+		WebregAdminToken: os.Getenv("WEBREG_ADMIN_TOKEN"),
+		WebregLogPath:    os.Getenv("WEBREG_LOG_PATH"),
+		WebregIPSalt:     os.Getenv("WEBREG_IP_SALT"),
 	}
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL required")
