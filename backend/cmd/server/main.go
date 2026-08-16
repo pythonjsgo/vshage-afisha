@@ -76,7 +76,11 @@ func main() {
 	}
 	submitLog := webreg.NewSubmitLog(cfg.WebregLogPath)
 	defer func() { _ = submitLog.Close() }()
-	webregHandler := webreg.NewHandler(webreg.NewRepository(pool, ipSalt), cfg.WebregAdminToken, submitLog)
+	webregRepo := webreg.NewRepository(pool, ipSalt)
+	webregHandler := webreg.NewHandler(webregRepo, cfg.WebregAdminToken, submitLog)
+
+	// События веб-регистрации показываются и в общей ленте афиши.
+	evHandler = evHandler.WithExtraSource(webregRepo)
 
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)

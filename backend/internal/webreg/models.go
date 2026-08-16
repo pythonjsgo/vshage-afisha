@@ -55,6 +55,7 @@ type Bridge struct {
 	TGChannelURL    string `json:"tg_channel_url,omitempty"`
 	TGChatURL       string `json:"tg_chat_url,omitempty"`
 	PrivacyURL      string `json:"privacy_url,omitempty"`
+	InstallURL      string `json:"install_url,omitempty"`
 }
 
 // Event is the public shape of an event page. manage_key_hash never leaves

@@ -4,7 +4,8 @@
   import MetaPill from './MetaPill.svelte';
 
   let { event }: { event: PublicEvent } = $props();
-  const href = $derived(`/${event.id}`);
+  // События веб-регистрации живут по своему адресу, а не по uuid.
+  const href = $derived(event.webreg_slug ? `/e/${event.webreg_slug}` : `/${event.id}`);
   const cancelled = $derived(event.status === 'cancelled');
   const category = $derived(event.category?.toUpperCase() ?? '');
 </script>

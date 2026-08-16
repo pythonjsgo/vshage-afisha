@@ -37,6 +37,10 @@ type PublicEvent struct {
 	OrganizerName    *string         `json:"organizer_name,omitempty"`
 	OrganizerPhoto   *string         `json:"organizer_photo,omitempty"`
 	Photos           []string        `json:"photos"`
+	// WebregSlug помечает событие, живущее в собственных таблицах
+	// веб-регистрации (см. internal/webreg). Фронт по нему строит ссылку
+	// на /e/<slug> вместо /<uuid>.
+	WebregSlug string `json:"webreg_slug,omitempty"`
 }
 
 type ListQuery struct {

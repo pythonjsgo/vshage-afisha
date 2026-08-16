@@ -1,5 +1,7 @@
 export interface PublicEvent {
   id: string;
+  /** Проставлен у событий веб-регистрации: карточка ведёт на /e/<slug>. */
+  webreg_slug?: string;
   title: string;
   short_description?: string;
   description?: string;

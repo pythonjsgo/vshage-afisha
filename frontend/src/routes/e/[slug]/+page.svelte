@@ -49,6 +49,29 @@
 	let submitting = $state(false);
 	let waitlistSubmitting = $state(false);
 
+	// Липкая кнопка «Иду» существует только пока форма НЕ на экране.
+	// Иначе внизу страницы их видно две подряд — поймано фаундером на
+	// скриншоте 17.08. Плюс она рисуется только при живом JS: без него
+	// прятать её нечем, а дубль хуже, чем её отсутствие.
+	let mounted = $state(false);
+	let submitEl = $state<HTMLElement | null>(null);
+	let submitOnScreen = $state(false);
+
+	$effect(() => {
+		mounted = true;
+	});
+
+	$effect(() => {
+		if (!submitEl) return;
+		const io = new IntersectionObserver(([entry]) => (submitOnScreen = entry.isIntersecting), {
+			rootMargin: '0px 0px -80px 0px'
+		});
+		io.observe(submitEl);
+		return () => io.disconnect();
+	});
+
+	const installURL = $derived(bridge.install_url || 'https://vshage.app/#beta');
+
 	// Restore what the visitor typed after a failed submit.
 	$effect(() => {
 		if (!values) return;
@@ -436,14 +459,28 @@
 
 					<input type="hidden" name="source" value={page.url.searchParams.get('from') ?? ''} />
 
-					<button class="btn btn-accent submit" type="submit" disabled={submitting}>
+					<button
+						class="btn btn-accent submit"
+						type="submit"
+						disabled={submitting}
+						bind:this={submitEl}
+					>
 						{submitting ? 'Записываем…' : 'Иду'}
 					</button>
 				</form>
 			{/if}
 		</section>
 
-		{#if !closed && !started}
+		<!-- ─── Приложение ─────────────────────────────────────── -->
+		<section class="app-cta">
+			<h2>Вшаге — сеть тех, кто рядом</h2>
+			<p>На событии приложение покажет, кто из участников сейчас в зале.</p>
+			<a class="btn btn-ghost" href={installURL} target="_blank" rel="noopener">
+				Скачать приложение
+			</a>
+		</section>
+
+		{#if mounted && !closed && !started && !submitOnScreen}
 			<div class="sticky">
 				<a class="btn btn-accent" href="#reg" onclick={scrollToForm}>Иду</a>
 			</div>
@@ -713,6 +750,27 @@
 		width: 100%;
 		min-height: 56px;
 		font-size: 17px;
+	}
+
+	/* ─── Приложение (вторичный призыв) ─────────────────────── */
+	.app-cta {
+		margin-top: var(--sp-8);
+		padding-top: var(--sp-5);
+		border-top: 1px solid var(--border);
+	}
+	.app-cta h2 {
+		font-family: var(--font-display);
+		font-size: 18px;
+		margin-bottom: var(--sp-2);
+	}
+	.app-cta p {
+		color: var(--mute);
+		font-size: 14px;
+		line-height: 1.5;
+		margin-bottom: var(--sp-4);
+	}
+	.app-cta .btn {
+		width: 100%;
 	}
 
 	/* ─── Sticky CTA ───────────────────────────────────────── */

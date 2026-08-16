@@ -18,7 +18,7 @@
 </script>
 
 {#if active}
-  <a class="hero" href={`/${active.id}`}
+  <a class="hero" href={active.webreg_slug ? `/e/${active.webreg_slug}` : `/${active.id}`}
      style={active.photo_url ? `background-image: url(${active.photo_url})` : ''}>
     <div class="overlay"></div>
     <div class="content">

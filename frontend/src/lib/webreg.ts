@@ -36,6 +36,8 @@ export type WebregBridge = {
 	tg_channel_url?: string;
 	tg_chat_url?: string;
 	privacy_url?: string;
+	/** Страница с инструкцией по установке. По умолчанию vshage.app/#beta. */
+	install_url?: string;
 };
 
 export type WebregEvent = {

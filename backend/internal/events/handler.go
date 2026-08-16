@@ -1,10 +1,12 @@
 package events
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -12,13 +14,29 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// ExtraSource — дополнительный источник событий для ленты афиши.
+// Реализуется пакетом webreg: события веб-регистрации живут в своих
+// таблицах, но фаундер хочет видеть их в общей афише (директива 17.08).
+// Интерфейс объявлен здесь, чтобы webreg зависел от events, а не наоборот.
+type ExtraSource interface {
+	UpcomingForAfisha(ctx context.Context, since time.Time) ([]PublicEvent, error)
+}
+
 type Handler struct {
 	repo  *Repository
 	cache *Cache
+	extra ExtraSource
 }
 
 func NewHandler(r *Repository, c *Cache) *Handler {
 	return &Handler{repo: r, cache: c}
+}
+
+// WithExtraSource подключает дополнительный источник событий (webreg).
+// Опционален: без него лента ведёт себя ровно как раньше.
+func (h *Handler) WithExtraSource(s ExtraSource) *Handler {
+	h.extra = s
+	return h
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
@@ -32,11 +50,37 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.repo.List(ctx, ListQuery{Limit: limit, Offset: offset})
-	if err != nil {
-		log.Printf("events.List: %v", err)
+	result, listErr := h.repo.List(ctx, ListQuery{Limit: limit, Offset: offset})
+	if listErr != nil {
+		log.Printf("events.List: %v", listErr)
+	}
+
+	// Два источника, и ни один не отменяет другой. Событие живой
+	// веб-регистрации обязано быть видно, даже если запрос к общим
+	// таблицам отвалился, — и наоборот. Пустой ответ отдаём только когда
+	// молчат оба.
+	var extra []PublicEvent
+	if h.extra != nil {
+		var extraErr error
+		extra, extraErr = h.extra.UpcomingForAfisha(ctx, time.Now().Add(-24*time.Hour))
+		if extraErr != nil {
+			log.Printf("events.List: extra source: %v", extraErr)
+		}
+	}
+
+	if listErr != nil && len(extra) == 0 {
 		writeError(w, http.StatusInternalServerError, "list failed")
 		return
+	}
+	if listErr != nil {
+		result = ListResult{Featured: []PublicEvent{}, All: []PublicEvent{}}
+	}
+	if len(extra) > 0 {
+		result.All = append(extra, result.All...)
+		sort.SliceStable(result.All, func(i, j int) bool {
+			return result.All[i].StartTime.Before(result.All[j].StartTime)
+		})
+		result.Total += len(extra)
 	}
 	h.cache.SetList(ctx, key, result, 60*time.Second)
 	writeJSON(w, http.StatusOK, result)
