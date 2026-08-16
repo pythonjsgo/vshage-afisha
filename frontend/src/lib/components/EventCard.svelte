@@ -11,7 +11,11 @@
 </script>
 
 <a {href} class="card" class:cancelled>
-  <div class="photo" style={event.photo_url ? `background-image: url(${event.photo_url})` : ''}>
+  <div
+    class="photo"
+    class:no-photo={!event.photo_url}
+    style={event.photo_url ? `background-image: url(${event.photo_url})` : ''}
+  >
     {#if !event.photo_url}
       <div class="ph-pattern"></div>
     {/if}
@@ -59,6 +63,13 @@
     background-size: cover;
     background-position: center;
     position: relative;
+  }
+  /* Без обложки карточка не должна зиять пустотой на пол-экрана —
+     это ровно то, что читается как «пустое меро». Сжимаем заглушку до
+     узкой полосы, содержимое карточки становится главным. */
+  .photo.no-photo {
+    aspect-ratio: auto;
+    height: 6px;
   }
   .ph-pattern {
     position: absolute; inset: 0;
