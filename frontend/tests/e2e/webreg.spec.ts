@@ -23,6 +23,32 @@ test.describe('web registration', () => {
 	// fixed one would silently exercise the update path on the second run.
 	const username = `e2e_${Date.now().toString(36)}`;
 
+	// A 200 from the HTML endpoint says nothing about whether the page is
+	// usable. On DEV the whole app rendered as unstyled HTML with no client JS
+	// because /_app/* was not routed to this service — every assertion below
+	// still passed, and only a screenshot gave it away. This test is the
+	// instrument for that failure: it fails on any asset the page asks for and
+	// does not get.
+	test('the page gets every asset it asks for', async ({ page }) => {
+		const broken: string[] = [];
+		page.on('response', (r) => {
+			if (r.status() >= 400) broken.push(`${r.status()} ${r.url()}`);
+		});
+		page.on('requestfailed', (r) => broken.push(`failed ${r.url()}`));
+
+		await page.goto(`/e/${SLUG}`, { waitUntil: 'networkidle' });
+
+		// Ignore third-party hosts (web fonts): only our own origin is ours to fix.
+		const ours = broken.filter((b) => b.includes(new URL(page.url()).host));
+		expect(ours, `битые ресурсы:\n${ours.join('\n')}`).toEqual([]);
+
+		// And the styles actually took effect, not merely downloaded.
+		const font = await page
+			.locator('h1')
+			.evaluate((el) => getComputedStyle(el).fontFamily.toLowerCase());
+		expect(font, 'заголовок отрисован системным шрифтом — CSS не применился').toContain('bowlby');
+	});
+
 	test('event page shows the essentials before any scrolling decision', async ({ page }) => {
 		await page.goto(`/e/${SLUG}`);
 
