@@ -118,15 +118,24 @@ openssl rand -hex 16
 # DEV
 curl -sS -X PUT https://afisha.dev.vshage.app/api/webreg/admin/events \
   -H "X-Admin-Token: $WEBREG_ADMIN_TOKEN" \
+  -H 'X-Owner-Scope: all' \
   -H 'Content-Type: application/json' \
   --data-binary @event-shag.json
 
 # PROD
 curl -sS -X PUT https://afisha.vshage.app/api/webreg/admin/events \
   -H "X-Admin-Token: $WEBREG_ADMIN_TOKEN" \
+  -H 'X-Owner-Scope: all' \
   -H 'Content-Type: application/json' \
   --data-binary @event-shag.json
 ```
+
+**`X-Owner-Scope: all` обязателен** на всех админских эндпоинтах. С 17.08 у
+события есть владелец (кабинет организатора), и запрос обязан сказать, от
+чьего имени идёт: либо `X-Owner-Slug: <кабинет>`, либо явное «за всех».
+Забытый заголовок отвечает 403 `owner_scope_required` — намеренно, чтобы
+умолчанием не оказался полный доступ. Организаторская панель ставит его
+сама; руками он нужен только здесь, в обходном пути.
 
 Повторный PUT с тем же `slug` — правка события, применяется за ≤15 секунд
 (столько живёт кэш конфига), **без деплоя**. Пустой `manage_key` при правке

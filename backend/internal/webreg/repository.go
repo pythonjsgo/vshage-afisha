@@ -280,8 +280,26 @@ func (r *Repository) ManageList(ctx context.Context, slug, key string) (*ManageL
 }
 
 // AdminList is the same view reached with the admin token: no per-event key.
-func (r *Repository) AdminList(ctx context.Context, slug string) (*ManageList, error) {
+// `owner` ограничивает выдачу кабинетом организатора; nil — админ, видит всё.
+func (r *Repository) AdminList(ctx context.Context, slug string, owner *string) (*ManageList, error) {
+	if err := r.assertOwner(ctx, slug, owner); err != nil {
+		return nil, err
+	}
 	return r.manageList(ctx, slug, nil)
+}
+
+// assertOwner отвечает pgx.ErrNoRows, если события нет ИЛИ оно чужое —
+// намеренно одинаково: чужой слаг не должен отличаться от несуществующего,
+// иначе список чужих событий перебирается по кодам ответа.
+func (r *Repository) assertOwner(ctx context.Context, slug string, owner *string) error {
+	if owner == nil {
+		return nil
+	}
+	var one int
+	err := r.pool.QueryRow(ctx,
+		`SELECT 1 FROM webreg_events WHERE slug = $1 AND owner_slug = $2`,
+		slug, *owner).Scan(&one)
+	return err
 }
 
 func (r *Repository) manageList(ctx context.Context, slug string, keyHash *string) (*ManageList, error) {
@@ -376,7 +394,15 @@ func (r *Repository) AddWaitlist(ctx context.Context, slug, platform, tgKey, tgD
 
 // UpsertEvent creates or replaces an event config. This is the "конфиг
 // руками" path — no UI yet, by design.
-func (r *Repository) UpsertEvent(ctx context.Context, in *EventUpsert) error {
+// UpsertEvent пишет конфиг события. `owner` — кабинет, от имени которого
+// пришёл запрос; nil означает админа.
+//
+// Слаг — это адрес страницы, и он общий на всю платформу. Значит организатор,
+// набравший чужой слаг, без защиты переписал бы чужое событие целиком: у
+// апсерта нет разницы между «создать своё» и «затереть соседнее». Поэтому
+// ветка UPDATE выполняется только при совпадении владельца, а ноль изменённых
+// строк превращается в отказ «слаг занят».
+func (r *Repository) UpsertEvent(ctx context.Context, in *EventUpsert, owner *string) error {
 	if err := validateUpsert(in); err != nil {
 		return err
 	}
@@ -419,13 +445,14 @@ func (r *Repository) UpsertEvent(ctx context.Context, in *EventUpsert) error {
 
 	// An empty manage_key on update keeps the existing one, so re-running the
 	// config to fix a typo does not silently rotate the organizer's link.
-	_, err := r.pool.Exec(ctx, `
+	tag, err := r.pool.Exec(ctx, `
 		INSERT INTO webreg_events
 			(slug, title, tagline, description, cover_url, starts_at, ends_at, timezone,
 			 venue, form, fields, affiliations, bridge, organizer_title, capacity,
-			 registration_open, publish_afisha, publish_vshage, ticket_mode, manage_key_hash)
+			 registration_open, publish_afisha, publish_vshage, ticket_mode, manage_key_hash,
+			 owner_slug)
 		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $7, $8,
-		        $9, $10, $11, $12, $13, NULLIF($14, ''), $15, $16, $17, $18, $19, $20)
+		        $9, $10, $11, $12, $13, NULLIF($14, ''), $15, $16, $17, $18, $19, $20, $21)
 		ON CONFLICT (slug) DO UPDATE SET
 			title             = EXCLUDED.title,
 			tagline           = EXCLUDED.tagline,
@@ -447,15 +474,27 @@ func (r *Repository) UpsertEvent(ctx context.Context, in *EventUpsert) error {
 			ticket_mode       = EXCLUDED.ticket_mode,
 			manage_key_hash   = COALESCE(NULLIF(EXCLUDED.manage_key_hash, ''), webreg_events.manage_key_hash),
 			updated_at        = NOW()
+		WHERE $21::text IS NULL OR webreg_events.owner_slug = $21
 	`, in.Slug, in.Title, in.Tagline, in.Description, in.CoverURL, in.StartsAt, in.EndsAt, tz,
 		venueJSON, formJSON, fieldsJSON, affJSON, bridgeJSON, in.OrganizerTitle, in.Capacity,
-		open, pubAfisha, pubVshage, ticketMode, keyHashOrEmpty(in.ManageKey))
-	return err
+		open, pubAfisha, pubVshage, ticketMode, keyHashOrEmpty(in.ManageKey), owner)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		// Конфликт слага с чужим событием: ветка UPDATE отфильтрована по
+		// владельцу. Формулировка ровно про адрес — чьё именно событие там
+		// лежит, организатору знать не нужно.
+		return &APIError{Status: http.StatusConflict, Code: "slug_taken",
+			Message: "Этот адрес уже занят другим событием — придумайте другой"}
+	}
+	return nil
 }
 
 // ListEvents is the admin index: every event with the numbers that decide
-// what to do next, newest start first.
-func (r *Repository) ListEvents(ctx context.Context) ([]EventSummary, error) {
+// what to do next, newest start first. `owner` — кабинет организатора; nil
+// означает админа, который видит всё, включая события без владельца.
+func (r *Repository) ListEvents(ctx context.Context, owner *string) ([]EventSummary, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT e.slug, e.title, e.starts_at, e.timezone, e.registration_open,
 		       e.publish_afisha, e.publish_vshage, e.capacity,
@@ -463,9 +502,10 @@ func (r *Repository) ListEvents(ctx context.Context) ([]EventSummary, error) {
 		       (SELECT COUNT(*) FROM webreg_registrations r
 		         WHERE r.event_slug = e.slug AND r.checked_in_at IS NOT NULL)
 		FROM webreg_events e
+		WHERE $1::text IS NULL OR e.owner_slug = $1
 		ORDER BY e.starts_at DESC
 		LIMIT 200
-	`)
+	`, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -485,7 +525,10 @@ func (r *Repository) ListEvents(ctx context.Context) ([]EventSummary, error) {
 
 // GetEventConfig returns the full editable config for the admin editor,
 // including the fields the public payload deliberately omits.
-func (r *Repository) GetEventConfig(ctx context.Context, slug string) (*EventUpsert, error) {
+func (r *Repository) GetEventConfig(ctx context.Context, slug string, owner *string) (*EventUpsert, error) {
+	if err := r.assertOwner(ctx, slug, owner); err != nil {
+		return nil, err
+	}
 	var (
 		out                                             EventUpsert
 		venueRaw, formRaw, fieldsRaw, affRaw, bridgeRaw []byte
@@ -528,10 +571,11 @@ func (r *Repository) GetEventConfig(ctx context.Context, slug string) (*EventUps
 
 // SetManageKey rotates the organizer's secret link. Returns pgx.ErrNoRows for
 // an unknown slug so the caller can answer 404 rather than a silent success.
-func (r *Repository) SetManageKey(ctx context.Context, slug, key string) error {
+func (r *Repository) SetManageKey(ctx context.Context, slug, key string, owner *string) error {
 	tag, err := r.pool.Exec(ctx,
-		`UPDATE webreg_events SET manage_key_hash = $2, updated_at = NOW() WHERE slug = $1`,
-		slug, HashKey(key))
+		`UPDATE webreg_events SET manage_key_hash = $2, updated_at = NOW()
+		  WHERE slug = $1 AND ($3::text IS NULL OR owner_slug = $3)`,
+		slug, HashKey(key), owner)
 	if err != nil {
 		return err
 	}

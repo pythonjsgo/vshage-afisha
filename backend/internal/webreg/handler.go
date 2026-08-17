@@ -320,8 +320,42 @@ func (h *Handler) CheckIn(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, t)
 }
 
+// ownerOf — кабинет, от имени которого пришёл админский запрос.
+//
+// Полный доступ запрашивается ЯВНО, заголовком `X-Owner-Scope: all`. Забытый
+// заголовок не должен означать «можно всё»: поверхность хоть и закрыта
+// админским токеном, но она торчит наружу (`/api/*` на afisha.vshage.app), и
+// умолчание «нет заголовка → весь список» — это тихий отказ, который выглядит
+// как успех. Тот же урок, что и с `{"sent":true}` при мёртвом SMTP.
+func ownerOf(r *http.Request) (owner *string, ok bool) {
+	if strings.TrimSpace(r.Header.Get("X-Owner-Scope")) == "all" {
+		return nil, true
+	}
+	v := strings.TrimSpace(r.Header.Get("X-Owner-Slug"))
+	if v == "" {
+		return nil, false
+	}
+	return &v, true
+}
+
+// requireScope отвечает 403 и объясняет, чего не хватило: это не ошибка гостя,
+// а неверно собранный внутренний запрос, и читать его будет инженер.
+func requireScope(w http.ResponseWriter, r *http.Request) (*string, bool) {
+	owner, ok := ownerOf(r)
+	if !ok {
+		writeAPIError(w, &APIError{Status: http.StatusForbidden, Code: "owner_scope_required",
+			Message: "нужен X-Owner-Slug (кабинет) либо X-Owner-Scope: all"})
+		return nil, false
+	}
+	return owner, true
+}
+
 func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
-	list, err := h.repo.ListEvents(r.Context())
+	owner, ok := requireScope(w, r)
+	if !ok {
+		return
+	}
+	list, err := h.repo.ListEvents(r.Context(), owner)
 	if err != nil {
 		log.Printf("webreg.ListEvents: %v", err)
 		writeAPIError(w, &APIError{Status: http.StatusServiceUnavailable, Code: "unavailable",
@@ -332,7 +366,11 @@ func (h *Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetEventConfig(w http.ResponseWriter, r *http.Request) {
-	cfg, err := h.repo.GetEventConfig(r.Context(), chi.URLParam(r, "slug"))
+	owner, ok := requireScope(w, r)
+	if !ok {
+		return
+	}
+	cfg, err := h.repo.GetEventConfig(r.Context(), chi.URLParam(r, "slug"), owner)
 	if err != nil {
 		writeLookupError(w, err, "webreg.GetEventConfig")
 		return
@@ -344,7 +382,11 @@ func (h *Handler) GetEventConfig(w http.ResponseWriter, r *http.Request) {
 // admin token instead of the per-event secret — so the panel can show any
 // event's attendees without the operator hunting down its manage link.
 func (h *Handler) AdminRegistrations(w http.ResponseWriter, r *http.Request) {
-	list, err := h.repo.AdminList(r.Context(), chi.URLParam(r, "slug"))
+	owner, ok := requireScope(w, r)
+	if !ok {
+		return
+	}
+	list, err := h.repo.AdminList(r.Context(), chi.URLParam(r, "slug"), owner)
 	if err != nil {
 		writeLookupError(w, err, "webreg.AdminRegistrations")
 		return
@@ -356,6 +398,10 @@ func (h *Handler) AdminRegistrations(w http.ResponseWriter, r *http.Request) {
 // RotateManageKey issues a fresh organizer link and invalidates the old one.
 // The plaintext key is returned exactly once, here — it is never stored.
 func (h *Handler) RotateManageKey(w http.ResponseWriter, r *http.Request) {
+	owner, ok := requireScope(w, r)
+	if !ok {
+		return
+	}
 	slug := chi.URLParam(r, "slug")
 	key, err := newManageKey()
 	if err != nil {
@@ -364,7 +410,7 @@ func (h *Handler) RotateManageKey(w http.ResponseWriter, r *http.Request) {
 			Message: "rotate failed"})
 		return
 	}
-	if err := h.repo.SetManageKey(r.Context(), slug, key); err != nil {
+	if err := h.repo.SetManageKey(r.Context(), slug, key, owner); err != nil {
 		writeLookupError(w, err, "webreg.RotateManageKey")
 		return
 	}
@@ -372,12 +418,16 @@ func (h *Handler) RotateManageKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) UpsertEvent(w http.ResponseWriter, r *http.Request) {
+	owner, ok := requireScope(w, r)
+	if !ok {
+		return
+	}
 	var in EventUpsert
 	if err := decodeJSON(w, r, &in); err != nil {
 		writeAPIError(w, err)
 		return
 	}
-	if err := h.repo.UpsertEvent(r.Context(), &in); err != nil {
+	if err := h.repo.UpsertEvent(r.Context(), &in, owner); err != nil {
 		var apiErr *APIError
 		if errors.As(err, &apiErr) {
 			writeAPIError(w, apiErr)
