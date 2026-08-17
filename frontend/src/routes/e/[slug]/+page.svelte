@@ -41,13 +41,52 @@
 		event.publish_afisha ? afishaEventURL(data.afishaOrigin, event.slug) : null
 	);
 	const installURL = $derived(bridge.install_url || 'https://vshage.app/#beta');
-	// «Открыть во Вшаге» без приложения означает «поставить Вшаге» — иначе
-	// это кнопка в никуда. Явный vshage_url перебивает, когда он появится.
+	// «Открыть во Вшаге» ведёт СНАЧАЛА в приложение: `vshage://e/<slug>` —
+	// экран записи внутри Вшаге, где поля уже подставлены из профиля. Если
+	// приложения нет, схема никуда не ведёт, поэтому обработчик ниже через
+	// секунду уводит на установку: у кнопки должен быть ответ в обоих случаях.
+	// Явный `vshage_url` из конфига перебивает — на случай, когда организатор
+	// хочет вести в конкретное место приложения.
+	const appDeepLink = $derived(`vshage://e/${event.slug}`);
 	const vshageHref = $derived(
 		event.publish_vshage
-			? bridge.vshage_url || bridge.testflight_url || bridge.app_store_url || installURL
+			? bridge.vshage_url || appDeepLink
 			: null
 	);
+	const isDeepLink = $derived(vshageHref === appDeepLink);
+
+	// Схему пробуем только на телефоне: в десктопном браузере неизвестный
+	// протокол даёт свою ошибку, и кнопка там честнее ведёт на установку.
+	const isMobile = $derived(
+		typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+	);
+	let appOpening = $state(false);
+
+	// Приложения может не быть — схема тогда молча ничего не делает, и на
+	// установку уводим сами. Отмена по любому признаку ухода: iOS сначала
+	// показывает свой диалог «Открыть в приложении?», и пока он висит,
+	// страница ещё видима — короткое окно утащило бы человека С приложением
+	// в App Store. Фолбэк открываем НОВОЙ вкладкой: на этой странице может
+	// быть наполовину заполненная форма или уже выданный билет.
+	function openInApp(e: MouseEvent) {
+		if (!isDeepLink || !isMobile || appOpening) return;
+		e.preventDefault();
+		appOpening = true;
+		const fallback = bridge.testflight_url || bridge.app_store_url || installURL;
+		let left = false;
+		const onLeave = () => { left = true; };
+		document.addEventListener('visibilitychange', onLeave, { once: true });
+		window.addEventListener('pagehide', onLeave, { once: true });
+		window.addEventListener('blur', onLeave, { once: true });
+		window.location.href = appDeepLink;
+		setTimeout(() => {
+			document.removeEventListener('visibilitychange', onLeave);
+			window.removeEventListener('pagehide', onLeave);
+			window.removeEventListener('blur', onLeave);
+			appOpening = false;
+			if (!left && !document.hidden) window.open(fallback, '_blank', 'noopener');
+		}, 2500);
+	}
 
 	// Описание сжимаем: первый абзац до 240 символов. Полный текст — в афише.
 	const DESC_LIMIT = 240;
@@ -610,7 +649,13 @@
 					Скачать приложение
 				</a>
 				{#if vshageHref}
-					<a class="btn btn-ghost" href={vshageHref} target="_blank" rel="noopener">
+					<a
+						class="btn btn-ghost"
+						href={vshageHref}
+						target={isDeepLink && isMobile ? null : '_blank'}
+						rel="noopener"
+						onclick={openInApp}
+					>
 						Открыть во Вшаге
 					</a>
 				{/if}
