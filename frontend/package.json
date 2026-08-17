@@ -20,6 +20,7 @@
 		"@sveltejs/kit": "^2.57.0",
 		"@sveltejs/vite-plugin-svelte": "^7.0.0",
 		"@types/node": "^25.6.0",
+		"@types/qrcode": "^1.5.6",
 		"@vitest/ui": "^4.1.4",
 		"jsdom": "^29.0.2",
 		"svelte": "^5.55.2",
@@ -30,6 +31,7 @@
 	},
 	"dependencies": {
 		"@resvg/resvg-js": "^2.6.2",
+		"qrcode": "^1.5.4",
 		"satori": "^0.26.0"
 	}
 }

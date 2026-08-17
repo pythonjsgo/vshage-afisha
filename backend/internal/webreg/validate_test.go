@@ -1,6 +1,7 @@
 package webreg
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -65,7 +66,11 @@ func TestNormalizeTG_DedupKeyIsStableAcrossShapes(t *testing.T) {
 
 func testEvent() *Event {
 	return &Event{
-		Slug:         "shag",
+		Slug: "shag",
+		// The pre-004 shape: name + telegram + вуз, all mandatory. These cases
+		// are the regression guard for events created before the form became
+		// configurable, so they must keep asserting exactly that behaviour.
+		Form:         LegacyForm(),
 		Affiliations: []string{"НИУ ВШЭ", "МГУ"},
 		Fields: []Field{
 			{Key: "source", Label: "Откуда узнал", Type: "select",
@@ -206,3 +211,158 @@ func TestHashKeyIsNotIdentity(t *testing.T) {
 
 // nowForTest keeps upsert fixtures readable; any non-zero time works.
 func nowForTest() time.Time { return time.Date(2026, 8, 18, 19, 0, 0, 0, time.UTC) }
+
+// ── configurable form (004) ──────────────────────────────────────────────
+
+// ticketEvent is the shape the admin editor produces by default: name and
+// email mandatory, telegram asked for but optional, вуз not asked at all.
+func ticketEvent() *Event {
+	return &Event{Slug: "expo", Form: DefaultForm(), TicketMode: TicketQR}
+}
+
+func TestForm_DisabledFieldIsNotDemanded(t *testing.T) {
+	in := &RegisterInput{
+		Name:    "Саша",
+		Email:   "sasha@example.com",
+		Consent: true,
+		// вуз is switched off for this event, and telegram is optional —
+		// neither may block a signup.
+	}
+	out, apiErr := validateRegistration(ticketEvent(), in)
+	if apiErr != nil {
+		t.Fatalf("unexpected error: %+v", apiErr.Fields)
+	}
+	if out.Affiliation != "" {
+		t.Fatalf("affiliation leaked through a disabled field: %q", out.Affiliation)
+	}
+}
+
+func TestForm_DisabledFieldIsNotStored(t *testing.T) {
+	// A visitor (or a crafted request) sending a value for a field the
+	// organizer switched off must not have it silently persisted — that is
+	// personal data collected without being asked for.
+	in := &RegisterInput{
+		Name: "Саша", Email: "sasha@example.com",
+		Phone: "+79031234567", Affiliation: "МГУ", FullName: "Иванов Саша",
+		Consent: true,
+	}
+	out, apiErr := validateRegistration(ticketEvent(), in)
+	if apiErr != nil {
+		t.Fatalf("unexpected error: %+v", apiErr.Fields)
+	}
+	if out.Phone != "" || out.Affiliation != "" || out.FullName != "" {
+		t.Fatalf("disabled fields stored: phone=%q affiliation=%q full_name=%q",
+			out.Phone, out.Affiliation, out.FullName)
+	}
+}
+
+func TestForm_OptionalFieldStillValidatedWhenFilled(t *testing.T) {
+	// Optional must mean "may be empty", never "may be garbage": a malformed
+	// telegram accepted silently is an attendee the organizer cannot reach.
+	in := &RegisterInput{
+		Name: "Саша", Email: "sasha@example.com", TGUsername: "ваня", Consent: true,
+	}
+	_, apiErr := validateRegistration(ticketEvent(), in)
+	if apiErr == nil || apiErr.Fields["tg_username"] == "" {
+		t.Fatalf("expected an error on the optional-but-filled telegram, got %+v", apiErr)
+	}
+}
+
+func TestForm_EmailRequiredCarriesTheReason(t *testing.T) {
+	in := &RegisterInput{Name: "Саша", Consent: true}
+	_, apiErr := validateRegistration(ticketEvent(), in)
+	if apiErr == nil {
+		t.Fatal("expected a missing-email error")
+	}
+	if msg := apiErr.Fields["email"]; !strings.Contains(msg, "билет") {
+		t.Fatalf("message must say why the email is needed, got %q", msg)
+	}
+}
+
+func TestNormalizeEmail(t *testing.T) {
+	for _, s := range []string{"  Sasha@Example.COM ", "sasha@example.com"} {
+		got, ok := NormalizeEmail(s)
+		if !ok || got != "sasha@example.com" {
+			t.Fatalf("NormalizeEmail(%q) = (%q, %v)", s, got, ok)
+		}
+	}
+	for _, s := range []string{"", "sasha", "sasha@", "@example.com", "a b@c.ru", "sasha@example"} {
+		if _, ok := NormalizeEmail(s); ok {
+			t.Fatalf("NormalizeEmail(%q) accepted an unusable address", s)
+		}
+	}
+}
+
+func TestNormalizePhone_RussianSpellingsCollapse(t *testing.T) {
+	// One person, four spellings — they must dedupe to one row.
+	for _, s := range []string{"+7 903 123-45-67", "8 (903) 123 45 67", "79031234567", "9031234567"} {
+		got, ok := NormalizePhone(s)
+		if !ok || got != "+79031234567" {
+			t.Fatalf("NormalizePhone(%q) = (%q, %v)", s, got, ok)
+		}
+	}
+	if _, ok := NormalizePhone("12345"); ok {
+		t.Fatal("a 5-digit string is not a phone number")
+	}
+}
+
+func TestDedupKey_PrefersEmailOverTelegram(t *testing.T) {
+	in := &RegisterInput{Email: "sasha@example.com", TGUsername: "sasha_23"}
+	got, err := dedupKey(DefaultForm(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "e:sasha@example.com" {
+		t.Fatalf("dedup key = %q, want the email — a telegram username can be changed", got)
+	}
+}
+
+func TestDedupKey_LegacyFormUsesTelegram(t *testing.T) {
+	in := &RegisterInput{TGUsername: "sasha_23"}
+	got, err := dedupKey(LegacyForm(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "t:sasha_23" {
+		t.Fatalf("dedup key = %q, want the telegram key", got)
+	}
+}
+
+func TestDedupKey_NoIdentityIsUniquePerSubmission(t *testing.T) {
+	// With nothing stable to key on, two signups must not collide into one
+	// row — an occasional duplicate beats one person overwriting another.
+	form := FormConfig{Version: 1, Name: FieldToggle{Enabled: true, Required: true}}
+	a, err := dedupKey(form, &RegisterInput{Name: "Саша"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := dedupKey(form, &RegisterInput{Name: "Саша"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a == b {
+		t.Fatalf("two anonymous signups share the dedup key %q", a)
+	}
+}
+
+func TestNewTicketCode_AvoidsAmbiguousGlyphs(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 200; i++ {
+		code, err := newTicketCode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(code) != 7 {
+			t.Fatalf("code %q is not 7 chars", code)
+		}
+		// These four are what turns a code read aloud at a door into the
+		// wrong code typed in.
+		if strings.ContainsAny(code, "IO01") {
+			t.Fatalf("code %q contains an ambiguous glyph", code)
+		}
+		seen[code] = true
+	}
+	if len(seen) < 190 {
+		t.Fatalf("only %d distinct codes in 200 draws — not random enough", len(seen))
+	}
+}

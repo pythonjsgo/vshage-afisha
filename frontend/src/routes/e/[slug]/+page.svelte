@@ -4,6 +4,7 @@
 	import { page } from '$app/state';
 	import {
 		OTHER_OPTION,
+		afishaEventURL,
 		formatEventWhen,
 		has2GIS,
 		routeURL,
@@ -15,6 +16,7 @@
 	const event = $derived(data.event);
 	const venue = $derived(event.venue ?? {});
 	const bridge = $derived(event.bridge ?? {});
+	const cfg = $derived(event.form);
 	const when = $derived(formatEventWhen(event.starts_at, event.timezone));
 	const started = $derived(new Date(event.starts_at).getTime() < Date.now());
 	const closed = $derived(!event.registration_open);
@@ -32,6 +34,33 @@
 
 	const affiliationOptions = $derived([...(event.affiliations ?? []), OTHER_OPTION]);
 
+	// Ссылки на два других представления события. Регистрационная страница
+	// намеренно короткая: обложка и полное описание живут в афише, сюда
+	// человек приходит по ссылке из лички, чтобы записаться (директива 17.08).
+	const afishaHref = $derived(
+		event.publish_afisha ? afishaEventURL(data.afishaOrigin, event.slug) : null
+	);
+	const installURL = $derived(bridge.install_url || 'https://vshage.app/#beta');
+	// «Открыть во Вшаге» без приложения означает «поставить Вшаге» — иначе
+	// это кнопка в никуда. Явный vshage_url перебивает, когда он появится.
+	const vshageHref = $derived(
+		event.publish_vshage
+			? bridge.vshage_url || bridge.testflight_url || bridge.app_store_url || installURL
+			: null
+	);
+
+	// Описание сжимаем: первый абзац до 240 символов. Полный текст — в афише.
+	const DESC_LIMIT = 240;
+	const descFull = $derived((event.description ?? '').trim());
+	const descShort = $derived.by(() => {
+		const firstPara = descFull.split(/\n\s*\n/)[0] ?? '';
+		if (firstPara.length <= DESC_LIMIT) return firstPara;
+		const cut = firstPara.slice(0, DESC_LIMIT);
+		const lastSpace = cut.lastIndexOf(' ');
+		return (lastSpace > 120 ? cut.slice(0, lastSpace) : cut) + '…';
+	});
+	const descTruncated = $derived(descShort.length < descFull.length);
+
 	// Every field is bound, never rendered as value={...}.
 	//
 	// This is not a style preference. A plain value={x} attribute is
@@ -40,6 +69,9 @@
 	// had already typed — the submit then failed validation on fields that
 	// looked filled in on screen. Caught by tests/e2e/webreg.spec.ts.
 	let name = $state(form?.values?.name ?? '');
+	let fullName = $state(form?.values?.full_name ?? '');
+	let email = $state(form?.values?.email ?? '');
+	let phone = $state(form?.values?.phone ?? '');
 	let tgUsername = $state(form?.values?.tg_username ?? '');
 	let affiliation = $state(form?.values?.affiliation ?? '');
 	let affiliationOther = $state(form?.values?.affiliation_other ?? '');
@@ -70,12 +102,13 @@
 		return () => io.disconnect();
 	});
 
-	const installURL = $derived(bridge.install_url || 'https://vshage.app/#beta');
-
 	// Restore what the visitor typed after a failed submit.
 	$effect(() => {
 		if (!values) return;
 		name = values.name ?? '';
+		fullName = values.full_name ?? '';
+		email = values.email ?? '';
+		phone = values.phone ?? '';
 		tgUsername = values.tg_username ?? '';
 		affiliation = values.affiliation ?? '';
 		affiliationOther = values.affiliation_other ?? '';
@@ -83,6 +116,8 @@
 		consent = values.consent ?? false;
 	});
 
+	// Обложка со страницы убрана, но в превью Телеграма она остаётся — там
+	// картинка и решает, откроют ссылку или пролистают.
 	const ogImage = $derived(
 		event.cover_url && /^https?:\/\//.test(event.cover_url) ? event.cover_url : null
 	);
@@ -112,12 +147,17 @@
 		el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 		// Focus after the scroll settles; focusing immediately fights the
 		// smooth scroll on iOS and jumps the viewport.
-		setTimeout(() => document.getElementById('name')?.focus(), 400);
+		setTimeout(() => document.querySelector<HTMLElement>('#reg .input')?.focus(), 400);
 	}
 
 	function optionsFor(f: WebregField): string[] {
 		const base = f.options ?? [];
 		return f.allow_other ? [...base, OTHER_OPTION] : base;
+	}
+
+	/** «Почта» / «Почта · необязательно» — метка несёт статус поля. */
+	function labelFor(text: string, required: boolean): string {
+		return required ? text : `${text} · необязательно`;
 	}
 </script>
 
@@ -149,9 +189,20 @@
 			<p class="position">{data.position}-й участник</p>
 		{/if}
 
+		{#if data.ticketCode}
+			<section class="ticket-box">
+				<div class="ticket-k">Билет на вход</div>
+				<div class="ticket-code">{data.ticketCode}</div>
+				<a class="btn btn-primary" href={`/e/${event.slug}/t/${data.ticketCode}`}>
+					{event.ticket_mode === 'qr' ? 'Открыть билет с QR' : 'Открыть билет'}
+				</a>
+				<p class="ticket-hint">Покажи его на входе. Ссылку можно сохранить или переслать себе.</p>
+			</section>
+		{/if}
+
 		{#if bridge.tg_chat_url || bridge.tg_channel_url}
 			<a
-				class="btn btn-primary"
+				class="btn btn-ghost"
 				href={bridge.tg_chat_url || bridge.tg_channel_url}
 				target="_blank"
 				rel="noopener"
@@ -212,15 +263,15 @@
 			</section>
 		{/if}
 
+		{#if afishaHref}
+			<a class="back-link" href={afishaHref}>Событие в афише →</a>
+		{/if}
 		<a class="back" href={`/e/${event.slug}`}>← к событию</a>
 	</main>
 {:else}
 	<!-- ─── Событие ────────────────────────────────────────────── -->
 	<main class="wrap">
 		<header class="hero">
-			{#if event.cover_url}
-				<img class="cover" src={event.cover_url} alt="" fetchpriority="high" />
-			{/if}
 			{#if event.organizer_title}
 				<div class="kicker">{event.organizer_title}</div>
 			{/if}
@@ -271,13 +322,6 @@
 							{/if}
 						</div>
 					{/if}
-					{#if venue.tags?.length}
-						<div class="tags">
-							{#each venue.tags.slice(0, 4) as tag}
-								<span class="tag">{tag}</span>
-							{/each}
-						</div>
-					{/if}
 					{#if venue.note}
 						<div class="venue-note">{venue.note}</div>
 					{/if}
@@ -295,8 +339,20 @@
 			</section>
 		{/if}
 
-		{#if event.description}
-			<section class="desc">{event.description}</section>
+		{#if descShort}
+			<section class="desc">
+				<p>{descShort}</p>
+				{#if descTruncated}
+					{#if afishaHref}
+						<a class="more" href={afishaHref}>Полное описание в афише →</a>
+					{:else}
+						<details>
+							<summary>Читать полностью</summary>
+							<p class="desc-rest">{descFull}</p>
+						</details>
+					{/if}
+				{/if}
+			</section>
 		{/if}
 
 		<!-- ─── Форма ──────────────────────────────────────────── -->
@@ -313,80 +369,154 @@
 				{/if}
 
 				<form method="POST" action="?/register" use:enhance={handleRegister} novalidate>
-					<label class="field">
-						<span class="label">Имя</span>
-						<input
-							class="input"
-							class:invalid={fieldErrors.name}
-							id="name"
-							name="name"
-							type="text"
-							autocomplete="name"
-							enterkeyhint="next"
-							placeholder="Как тебя зовут"
-							bind:value={name}
-							required
-						/>
-						{#if fieldErrors.name}<span class="err">{fieldErrors.name}</span>{/if}
-					</label>
-
-					<label class="field">
-						<span class="label">Телеграм</span>
-						<input
-							class="input"
-							class:invalid={fieldErrors.tg_username}
-							name="tg_username"
-							type="text"
-							inputmode="text"
-							autocapitalize="none"
-							autocorrect="off"
-							spellcheck="false"
-							enterkeyhint="next"
-							placeholder="@username"
-							bind:value={tgUsername}
-							required
-						/>
-						{#if fieldErrors.tg_username}
-							<span class="err">{fieldErrors.tg_username}</span>
-						{:else}
-							<span class="hint">По нему организатор добавит тебя в чат</span>
-						{/if}
-					</label>
-
-					<label class="field">
-						<span class="label">Вуз или статус</span>
-						<select
-							class="input"
-							class:invalid={fieldErrors.affiliation}
-							name="affiliation"
-							bind:value={affiliation}
-							required
-						>
-							<option value="" disabled selected={!affiliation}>Выбери из списка</option>
-							{#each affiliationOptions as opt}
-								<option value={opt}>{opt}</option>
-							{/each}
-						</select>
-						{#if fieldErrors.affiliation}<span class="err">{fieldErrors.affiliation}</span>{/if}
-					</label>
-
-					{#if affiliation === OTHER_OPTION}
+					{#if cfg.name.enabled}
 						<label class="field">
-							<span class="label">Что именно</span>
+							<span class="label">{labelFor('Имя', cfg.name.required)}</span>
 							<input
 								class="input"
-								name="affiliation_other"
+								class:invalid={fieldErrors.name}
+								name="name"
 								type="text"
-								placeholder="Вуз, компания или статус"
-								bind:value={affiliationOther}
-								required
+								autocomplete="name"
+								enterkeyhint="next"
+								placeholder="Как тебя зовут"
+								bind:value={name}
+								required={cfg.name.required}
 							/>
+							{#if fieldErrors.name}<span class="err">{fieldErrors.name}</span>{/if}
 						</label>
+					{/if}
+
+					{#if cfg.full_name.enabled}
+						<label class="field">
+							<span class="label">{labelFor('ФИО как в документе', cfg.full_name.required)}</span>
+							<input
+								class="input"
+								class:invalid={fieldErrors.full_name}
+								name="full_name"
+								type="text"
+								autocomplete="name"
+								enterkeyhint="next"
+								placeholder="Иванов Иван Иванович"
+								bind:value={fullName}
+								required={cfg.full_name.required}
+							/>
+							{#if fieldErrors.full_name}
+								<span class="err">{fieldErrors.full_name}</span>
+							{:else}
+								<span class="hint">
+									{cfg.pass_note || 'Нужно, чтобы выписать пропуск на входе'}
+								</span>
+							{/if}
+						</label>
+					{/if}
+
+					{#if cfg.email.enabled}
+						<label class="field">
+							<span class="label">{labelFor('Почта', cfg.email.required)}</span>
+							<input
+								class="input"
+								class:invalid={fieldErrors.email}
+								name="email"
+								type="email"
+								inputmode="email"
+								autocomplete="email"
+								autocapitalize="none"
+								autocorrect="off"
+								spellcheck="false"
+								enterkeyhint="next"
+								placeholder="you@example.com"
+								bind:value={email}
+								required={cfg.email.required}
+							/>
+							{#if fieldErrors.email}
+								<span class="err">{fieldErrors.email}</span>
+							{:else}
+								<span class="hint">На неё пришлём билет и напоминание перед событием</span>
+							{/if}
+						</label>
+					{/if}
+
+					{#if cfg.phone.enabled}
+						<label class="field">
+							<span class="label">{labelFor('Телефон', cfg.phone.required)}</span>
+							<input
+								class="input"
+								class:invalid={fieldErrors.phone}
+								name="phone"
+								type="tel"
+								inputmode="tel"
+								autocomplete="tel"
+								enterkeyhint="next"
+								placeholder="+7 903 123-45-67"
+								bind:value={phone}
+								required={cfg.phone.required}
+							/>
+							{#if fieldErrors.phone}<span class="err">{fieldErrors.phone}</span>{/if}
+						</label>
+					{/if}
+
+					{#if cfg.tg.enabled}
+						<label class="field">
+							<span class="label">{labelFor('Телеграм', cfg.tg.required)}</span>
+							<input
+								class="input"
+								class:invalid={fieldErrors.tg_username}
+								name="tg_username"
+								type="text"
+								inputmode="text"
+								autocapitalize="none"
+								autocorrect="off"
+								spellcheck="false"
+								enterkeyhint="next"
+								placeholder="@username"
+								bind:value={tgUsername}
+								required={cfg.tg.required}
+							/>
+							{#if fieldErrors.tg_username}
+								<span class="err">{fieldErrors.tg_username}</span>
+							{:else}
+								<span class="hint">По нему организатор добавит тебя в чат</span>
+							{/if}
+						</label>
+					{/if}
+
+					{#if cfg.affiliation.enabled}
+						<label class="field">
+							<span class="label">{labelFor('Вуз или статус', cfg.affiliation.required)}</span>
+							<select
+								class="input"
+								class:invalid={fieldErrors.affiliation}
+								name="affiliation"
+								bind:value={affiliation}
+								required={cfg.affiliation.required}
+							>
+								<option value="" disabled selected={!affiliation}>Выбери из списка</option>
+								{#each affiliationOptions as opt}
+									<option value={opt}>{opt}</option>
+								{/each}
+							</select>
+							{#if fieldErrors.affiliation}<span class="err">{fieldErrors.affiliation}</span>{/if}
+						</label>
+
+						{#if affiliation === OTHER_OPTION}
+							<label class="field">
+								<span class="label">Что именно</span>
+								<input
+									class="input"
+									name="affiliation_other"
+									type="text"
+									placeholder="Вуз, компания или статус"
+									bind:value={affiliationOther}
+									required
+								/>
+							</label>
+						{/if}
 					{/if}
 
 					{#each event.fields ?? [] as f (f.key)}
 						<div class="field">
-							<span class="label">{f.label}{f.required ? '' : ' · необязательно'}</span>
+							<span class="label">{labelFor(f.label, Boolean(f.required))}</span>
 							{#if f.type === 'select'}
 								<select
 									class="input"
@@ -471,13 +601,23 @@
 			{/if}
 		</section>
 
-		<!-- ─── Приложение ─────────────────────────────────────── -->
+		<!-- ─── Где ещё есть это событие ───────────────────────── -->
 		<section class="app-cta">
 			<h2>Вшаге — сеть тех, кто рядом</h2>
 			<p>На событии приложение покажет, кто из участников сейчас в зале.</p>
-			<a class="btn btn-ghost" href={installURL} target="_blank" rel="noopener">
-				Скачать приложение
-			</a>
+			<div class="cta-row">
+				<a class="btn btn-ghost" href={installURL} target="_blank" rel="noopener">
+					Скачать приложение
+				</a>
+				{#if vshageHref}
+					<a class="btn btn-ghost" href={vshageHref} target="_blank" rel="noopener">
+						Открыть во Вшаге
+					</a>
+				{/if}
+				{#if afishaHref}
+					<a class="btn btn-ghost" href={afishaHref}>Открыть в афише</a>
+				{/if}
+			</div>
 		</section>
 
 		{#if mounted && !closed && !started && !submitOnScreen}
@@ -498,15 +638,6 @@
 	/* ─── Hero ─────────────────────────────────────────────── */
 	.hero {
 		padding-top: var(--sp-5);
-	}
-	.cover {
-		width: 100%;
-		aspect-ratio: 16 / 9;
-		object-fit: cover;
-		border-radius: 14px;
-		display: block;
-		margin-bottom: var(--sp-4);
-		background: var(--bg-elev);
 	}
 	.kicker {
 		font-size: 11px;
@@ -583,19 +714,6 @@
 		font-size: 13px;
 		color: var(--fg);
 	}
-	.tags {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--sp-2);
-		margin-top: var(--sp-3);
-	}
-	.tag {
-		font-size: 11px;
-		padding: 3px 8px;
-		border: 1px solid var(--border);
-		border-radius: 999px;
-		color: var(--mute);
-	}
 	.venue-actions {
 		display: flex;
 		gap: var(--sp-2);
@@ -603,10 +721,24 @@
 	}
 
 	.desc {
-		white-space: pre-wrap;
 		line-height: 1.6;
 		font-size: 15px;
 		margin-bottom: var(--sp-6);
+	}
+	.desc p {
+		white-space: pre-wrap;
+	}
+	.desc .more,
+	.desc summary {
+		display: inline-block;
+		margin-top: var(--sp-3);
+		font-size: 14px;
+		color: var(--accent-green);
+		cursor: pointer;
+	}
+	.desc-rest {
+		margin-top: var(--sp-3);
+		color: var(--mute);
 	}
 
 	/* ─── Form ─────────────────────────────────────────────── */
@@ -752,7 +884,7 @@
 		font-size: 17px;
 	}
 
-	/* ─── Приложение (вторичный призыв) ─────────────────────── */
+	/* ─── Приложение + другие витрины события ───────────────── */
 	.app-cta {
 		margin-top: var(--sp-8);
 		padding-top: var(--sp-5);
@@ -769,7 +901,12 @@
 		line-height: 1.5;
 		margin-bottom: var(--sp-4);
 	}
-	.app-cta .btn {
+	.cta-row {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sp-2);
+	}
+	.cta-row .btn {
 		width: 100%;
 	}
 
@@ -823,6 +960,31 @@
 		margin-top: var(--sp-5);
 		width: 100%;
 	}
+	.ticket-box {
+		margin-top: var(--sp-6);
+		padding: var(--sp-4);
+		border: 1px solid var(--accent-green);
+		border-radius: 14px;
+		background: var(--bg-elev);
+	}
+	.ticket-k {
+		font-size: 10px;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: var(--mute);
+	}
+	.ticket-code {
+		font-family: var(--font-mono, monospace);
+		font-size: 30px;
+		letter-spacing: 0.16em;
+		margin: var(--sp-2) 0 0;
+	}
+	.ticket-hint {
+		margin-top: var(--sp-3);
+		font-size: 12px;
+		color: var(--mute);
+		line-height: 1.4;
+	}
 	.bridge {
 		margin-top: var(--sp-8);
 		padding-top: var(--sp-5);
@@ -852,9 +1014,15 @@
 		margin-top: var(--sp-3);
 		font-size: 13px;
 	}
+	.back-link {
+		display: block;
+		margin-top: var(--sp-6);
+		color: var(--accent-green);
+		font-size: 14px;
+	}
 	.back {
 		display: inline-block;
-		margin-top: var(--sp-6);
+		margin-top: var(--sp-4);
 		color: var(--mute);
 		font-size: 13px;
 	}

@@ -1,6 +1,7 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import {
+	afishaOriginFor,
 	detectPlatform,
 	OTHER_OPTION,
 	type WebregApiError,
@@ -64,7 +65,9 @@ export const load: PageServerLoad = async ({ params, fetch, request, setHeaders,
 		platform: detectPlatform(request.headers.get('user-agent')),
 		done,
 		position: Number(url.searchParams.get('pos') ?? 0) || 0,
-		alreadyRegistered: url.searchParams.get('again') === '1'
+		alreadyRegistered: url.searchParams.get('again') === '1',
+		ticketCode: (url.searchParams.get('t') ?? '').slice(0, 16),
+		afishaOrigin: afishaOriginFor(url.host)
 	};
 };
 
@@ -93,6 +96,9 @@ export const actions: Actions = {
 
 		const payload = {
 			name: String(form.get('name') ?? '').trim(),
+			full_name: String(form.get('full_name') ?? '').trim(),
+			email: String(form.get('email') ?? '').trim(),
+			phone: String(form.get('phone') ?? '').trim(),
 			tg_username: String(form.get('tg_username') ?? '').trim(),
 			affiliation,
 			answers,
@@ -103,6 +109,9 @@ export const actions: Actions = {
 		// Echoed back so a failed submit never blanks what the visitor typed.
 		const values = {
 			name: payload.name,
+			full_name: payload.full_name,
+			email: payload.email,
+			phone: payload.phone,
 			tg_username: payload.tg_username,
 			affiliation: affiliationRaw,
 			affiliation_other: affiliationOther,
@@ -139,6 +148,7 @@ export const actions: Actions = {
 		const body = (await res.json().catch(() => ({}))) as WebregApiError & {
 			position?: number;
 			already_registered?: boolean;
+			ticket_code?: string;
 		};
 
 		if (!res.ok) {
@@ -155,9 +165,14 @@ export const actions: Actions = {
 		// otherwise throw the visitor back to an empty registration form, and
 		// a refresh on a flaky connection would do the same. No name in the
 		// query string — it would leak into referrers and access logs.
+		//
+		// The ticket code does travel in the query. It is the same secret as
+		// the /t/<code> link the visitor is about to be handed anyway, and
+		// carrying it here is what lets a refresh still show their ticket.
 		const q = new URLSearchParams({ done: '1' });
 		if (body.position) q.set('pos', String(body.position));
 		if (body.already_registered) q.set('again', '1');
+		if (body.ticket_code) q.set('t', body.ticket_code);
 		redirect(303, `/e/${encodeURIComponent(params.slug)}?${q}`);
 	},
 
