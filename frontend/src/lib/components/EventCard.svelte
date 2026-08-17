@@ -4,8 +4,10 @@
   import MetaPill from './MetaPill.svelte';
 
   let { event }: { event: PublicEvent } = $props();
-  // События веб-регистрации живут по своему адресу, а не по uuid.
-  const href = $derived(event.webreg_slug ? `/e/${event.webreg_slug}` : `/${event.id}`);
+  // События веб-регистрации адресуются слагом, а не uuid. Ведём на карточку
+  // афиши, а не на страницу регистрации: из ленты человек идёт смотреть, что
+  // это за событие, и уже оттуда — записываться (директива 17.08).
+  const href = $derived(event.webreg_slug ? `/${event.webreg_slug}` : `/${event.id}`);
   const cancelled = $derived(event.status === 'cancelled');
   const category = $derived(event.category?.toUpperCase() ?? '');
 </script>

@@ -38,7 +38,31 @@ export type WebregBridge = {
 	privacy_url?: string;
 	/** Страница с инструкцией по установке. По умолчанию vshage.app/#beta. */
 	install_url?: string;
+	/**
+	 * Куда ведёт «Открыть во Вшаге». Пока в приложении нет экрана веб-события,
+	 * поле пустое и кнопка падает на установку — для человека без приложения
+	 * «открыть во Вшаге» и значит «поставить Вшаге».
+	 */
+	vshage_url?: string;
 };
+
+/** Один встроенный контакт: спрашиваем ли вообще и обязателен ли. */
+export type FieldToggle = { enabled: boolean; required: boolean };
+
+/** Встроенный блок контактов. Всё остальное — поля организатора. */
+export type WebregForm = {
+	v: number;
+	name: FieldToggle;
+	full_name: FieldToggle;
+	email: FieldToggle;
+	phone: FieldToggle;
+	tg: FieldToggle;
+	affiliation: FieldToggle;
+	/** Зачем нужно ФИО — показывается под полем. */
+	pass_note?: string;
+};
+
+export type TicketMode = 'qr' | 'code' | 'off';
 
 export type WebregEvent = {
 	slug: string;
@@ -50,12 +74,16 @@ export type WebregEvent = {
 	ends_at?: string;
 	timezone: string;
 	venue: VenueCard;
+	form: WebregForm;
 	fields: WebregField[];
 	affiliations: string[];
 	bridge: WebregBridge;
 	organizer_title?: string;
 	capacity?: number;
 	registration_open: boolean;
+	publish_afisha: boolean;
+	publish_vshage: boolean;
+	ticket_mode: TicketMode;
 	registered_count: number;
 	seats_left?: number;
 };
@@ -63,10 +91,15 @@ export type WebregEvent = {
 export type WebregRegistration = {
 	id: number;
 	name: string;
-	tg_username: string;
-	tg_display: string;
-	affiliation: string;
+	full_name?: string;
+	email?: string;
+	phone?: string;
+	tg_username?: string;
+	tg_display?: string;
+	affiliation?: string;
 	answers: Record<string, string>;
+	ticket_code?: string;
+	checked_in_at?: string;
 	created_at: string;
 };
 
@@ -75,11 +108,53 @@ export type WebregManageList = {
 	title: string;
 	starts_at: string;
 	timezone: string;
+	form: WebregForm;
 	fields: WebregField[];
+	ticket_mode: TicketMode;
 	capacity?: number;
 	total: number;
+	checked_in: number;
 	registrations: WebregRegistration[];
 };
+
+export type WebregTicket = {
+	event_slug: string;
+	event_title: string;
+	starts_at: string;
+	timezone: string;
+	venue_name?: string;
+	venue_address?: string;
+	name: string;
+	full_name?: string;
+	code: string;
+	checked_in_at?: string;
+};
+
+/**
+ * Адрес афиши для текущего стенда. Выводится из хоста запроса, а не из
+ * константы: одна и та же сборка обслуживает `vshage.app` и `dev.vshage.app`,
+ * и зашитый прод-домен увёл бы проверку на DEV в чужой стенд.
+ *
+ * `/e/<slug>` отдаётся с обоих хостов, а карточка афиши живёт только на
+ * поддомене афиши — поэтому ссылка туда обязана быть абсолютной.
+ */
+export function afishaOriginFor(host: string): string {
+	const h = (host ?? '').toLowerCase().replace(/:\d+$/, '');
+	if (h.startsWith('afisha.')) return `https://${h}`;
+	if (h === 'vshage.app' || h === 'www.vshage.app') return 'https://afisha.vshage.app';
+	if (h.endsWith('dev.vshage.app')) return 'https://afisha.dev.vshage.app';
+	// Локальная разработка: афиша и /e/ живут на одном порту.
+	return '';
+}
+
+/**
+ * Карточка события в афише. Отдельная от ссылки регистрации by design
+ * (директива фаундера 17.08): афиша — витрина с обложкой и полным описанием,
+ * /e/<slug> — короткая страница, которую шлют в личку, чтобы записаться.
+ */
+export function afishaEventURL(origin: string, slug: string): string {
+	return `${origin}/${slug}`;
+}
 
 export type WebregApiError = {
 	code?: string;

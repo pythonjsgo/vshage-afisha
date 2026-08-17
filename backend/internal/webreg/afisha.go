@@ -16,13 +16,17 @@ import (
 // It implements events.ExtraSource. The dependency points this way — webreg
 // imports events, never the reverse — so the board stays unaware that a second
 // source exists beyond the interface.
+//
+// The filter is publish_afisha, not registration_open: an event whose seats
+// are gone is still a real event happening in the city, and dropping it off
+// the board the moment it fills up hides exactly the events worth seeing.
 func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time) ([]events.PublicEvent, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT slug, title, tagline, description, cover_url, starts_at, ends_at,
 		       venue, organizer_title, capacity,
 		       (SELECT COUNT(*) FROM webreg_registrations rg WHERE rg.event_slug = e.slug)
 		FROM webreg_events e
-		WHERE registration_open AND starts_at >= $1
+		WHERE publish_afisha AND starts_at >= $1
 		ORDER BY starts_at ASC
 		LIMIT 50
 	`, since)
