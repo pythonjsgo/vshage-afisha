@@ -198,7 +198,7 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 
 	var profileID string
 	deviceID := "afisha:" + publicContactHash(contact)
-	profileID, err = upsertPublicProfile(ctx, tx, deviceID, name)
+	profileID, err = upsertPublicProfile(ctx, tx, deviceID, name, contact)
 	if err != nil {
 		return nil, err
 	}
@@ -300,7 +300,45 @@ func publicContactHash(contact string) string {
 	return hex.EncodeToString(sum[:])[:56]
 }
 
-func upsertPublicProfile(ctx context.Context, tx pgx.Tx, deviceID, name string) (string, error) {
+// classifyPublicContact routes the single free-form contact field
+// («телефон / email / telegram») into the profile column it belongs to, so
+// the organizer panel and its CSV export can show a reachable contact
+// instead of nothing. Input is already normalized: lowercased, with
+// spaces/()- stripped.
+func classifyPublicContact(contact string) (email, phone, telegram string) {
+	c := contact
+	if at := strings.Index(c, "@"); at > 0 && strings.Count(c, "@") == 1 && strings.Contains(c[at:], ".") {
+		return c, "", ""
+	}
+	digits := strings.TrimPrefix(c, "+")
+	if len(digits) >= 5 && strings.IndexFunc(digits, func(r rune) bool { return r < '0' || r > '9' }) == -1 {
+		return "", c, ""
+	}
+	for _, p := range []string{"https://t.me/", "http://t.me/", "t.me/", "@"} {
+		c = strings.TrimPrefix(c, p)
+	}
+	if r := []rune(c); len(r) > 100 { // profiles.telegram_id is VARCHAR(100)
+		c = string(r[:100])
+	}
+	return "", "", c
+}
+
+func upsertPublicProfile(ctx context.Context, tx pgx.Tx, deviceID, name, contact string) (string, error) {
+	email, phone, telegram := classifyPublicContact(contact)
+	// A repeat registration carries one contact type; NULLIF+COALESCE keeps
+	// the previously saved types instead of blanking them.
+	update := func(profileID string) error {
+		_, err := tx.Exec(ctx, `
+			UPDATE profiles
+			SET name = $2,
+			    email = COALESCE(NULLIF($3, ''), email),
+			    phone = COALESCE(NULLIF($4, ''), phone),
+			    telegram_id = COALESCE(NULLIF($5, ''), telegram_id),
+			    updated_at = now()
+			WHERE id = $1`, profileID, name, email, phone, telegram)
+		return err
+	}
+
 	var profileID string
 	err := tx.QueryRow(ctx, `
 		SELECT id
@@ -311,18 +349,17 @@ func upsertPublicProfile(ctx context.Context, tx pgx.Tx, deviceID, name string) 
 		FOR UPDATE
 	`, deviceID).Scan(&profileID)
 	if err == nil {
-		_, err = tx.Exec(ctx, `UPDATE profiles SET name = $2, updated_at = now() WHERE id = $1`, profileID, name)
-		return profileID, err
+		return profileID, update(profileID)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return "", err
 	}
 
 	err = tx.QueryRow(ctx, `
-		INSERT INTO profiles (device_id, name)
-		VALUES ($1, $2)
+		INSERT INTO profiles (device_id, name, email, phone, telegram_id)
+		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''))
 		RETURNING id
-	`, deviceID, name).Scan(&profileID)
+	`, deviceID, name, email, phone, telegram).Scan(&profileID)
 	if err == nil {
 		return profileID, nil
 	}
@@ -343,6 +380,5 @@ func upsertPublicProfile(ctx context.Context, tx pgx.Tx, deviceID, name string) 
 	if err != nil {
 		return "", err
 	}
-	_, err = tx.Exec(ctx, `UPDATE profiles SET name = $2, updated_at = now() WHERE id = $1`, profileID, name)
-	return profileID, err
+	return profileID, update(profileID)
 }
