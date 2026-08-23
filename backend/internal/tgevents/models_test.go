@@ -40,6 +40,9 @@ func TestValidateRejects(t *testing.T) {
 		{"registration_url не http(s) — уйдёт в href",
 			func(c *Card) { bad := "javascript:alert(1)"; c.RegistrationURL = &bad }, "registration_url"},
 		{"source_url не http(s)", func(c *Card) { bad := "tg://resolve?x"; c.SourceURL = &bad }, "source_url"},
+		{"обложка без mime", func(c *Card) { b := "aGkh"; c.CoverB64 = &b }, "cover_mime"},
+		{"обложка с не-картиночным mime",
+			func(c *Card) { b, m := "aGkh", "text/html"; c.CoverB64, c.CoverMime = &b, &m }, "cover_mime"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

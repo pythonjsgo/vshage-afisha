@@ -38,7 +38,23 @@ type Card struct {
 	// Payload принимается при импорте и хранится, но наружу не отдаётся:
 	// внутри полная карточка с чужим текстом поста (юр. рамка витрины).
 	Payload map[string]any `json:"payload,omitempty"`
+
+	// Обложка (решение фаундера 23.08: превью поста на витрине, источник
+	// подписан). На входе импорта — байты base64 + mime; наружу List отдаёт
+	// только CoverURL на наш же эндпоинт: телеграмный CDN протухает за дни.
+	CoverB64  *string `json:"cover_b64,omitempty"`
+	CoverMime *string `json:"cover_mime,omitempty"`
+	CoverURL  string  `json:"cover_url,omitempty"`
 }
+
+// coverMimes — что витрина согласна отдать браузеру как картинку.
+var coverMimes = map[string]bool{
+	"image/jpeg": true, "image/png": true, "image/webp": true, "image/gif": true,
+}
+
+// maxCoverBytes ограничивает РАСКОДИРОВАННУЮ обложку: превью постов — сотни
+// КБ; мегабайты — признак того, что импортёр скачал не то.
+const maxCoverBytes = 3 << 20
 
 // accessLevels — закрытый словарь уровня доступа из контракта карточек
 // (vshage-geo EVENTS-CONTRACT.md). Неизвестное значение — брак импорта,
@@ -81,7 +97,19 @@ func (c *Card) Validate() error {
 	if err := validateURL("source_url", c.SourceURL); err != nil {
 		return err
 	}
+	if c.CoverB64 != nil && *c.CoverB64 != "" {
+		if c.CoverMime == nil || !coverMimes[*c.CoverMime] {
+			return fmt.Errorf("cover_mime %v вне словаря картинок", deref(c.CoverMime))
+		}
+	}
 	return nil
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return "<nil>"
+	}
+	return *s
 }
 
 func validateURL(field string, v *string) error {

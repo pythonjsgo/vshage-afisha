@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 )
 
 // Партия — payload полной карточки на каждое событие; после осеннего
@@ -47,6 +50,28 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		"events": cards,
 		"count":  len(cards),
 	})
+}
+
+// Cover — GET /api/tg-events/{id}/cover: байты обложки со своего origin.
+func (h *Handler) Cover(w http.ResponseWriter, r *http.Request) {
+	data, mime, err := h.repo.Cover(r.Context(), chi.URLParam(r, "id"))
+	if errors.Is(err, ErrNoCover) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		log.Printf("tgevents.Cover: %v", err)
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+	// Обложка меняется только импортом и только вместе с карточкой — кэшу
+	// можно жить сутки, битая картинка лечится следующим импортом сама.
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.Header().Set("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800")
+	if _, err := w.Write(data); err != nil {
+		log.Printf("tgevents.Cover write: %v", err)
+	}
 }
 
 // AdminBulkUpsert — PUT /api/tg-events/admin/bulk: идемпотентная заливка

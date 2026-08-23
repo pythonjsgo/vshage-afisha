@@ -24,6 +24,9 @@ export type TgEvent = {
 	segment?: string;
 	org_name?: string;
 	source_url?: string;
+	// Обложка с нашего origin (/api/tg-events/<id>/cover) — байты превью
+	// поста, скачанные импортёром; прямые ссылки на CDN телеги протухают.
+	cover_url?: string;
 };
 
 export type TgEventList = { events: TgEvent[]; count: number; degraded?: boolean };

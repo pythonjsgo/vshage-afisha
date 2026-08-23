@@ -43,6 +43,7 @@
 			return 'источник';
 		}
 	}
+
 </script>
 
 <svelte:head>
@@ -74,7 +75,22 @@
 	{:else}
 		<div class="list">
 			{#each data.events as ev (ev.id)}
-				<article class="event">
+				<article class="event" class:with-cover={!!ev.cover_url}>
+					{#if ev.cover_url && ev.source_url}
+						<a
+							class="cover"
+							href={ev.source_url}
+							target="_blank"
+							rel="noopener noreferrer"
+							aria-label="Анонс-первоисточник"
+						>
+							<img src={ev.cover_url} alt="" loading="lazy" />
+						</a>
+					{:else if ev.cover_url}
+						<div class="cover">
+							<img src={ev.cover_url} alt="" loading="lazy" />
+						</div>
+					{/if}
 					<div class="when">
 						<span class="date">{dateLabel(ev)}</span>
 						{#if ev.time_start}<span class="time">{ev.time_start}</span>{/if}
@@ -159,25 +175,46 @@
 	.list { display: flex; flex-direction: column; gap: var(--sp-4); }
 
 	.event {
-		display: grid; grid-template-columns: 110px 1fr; gap: var(--sp-4);
+		display: grid;
+		grid-template-areas: 'when body';
+		grid-template-columns: 110px 1fr;
+		gap: var(--sp-4);
 		background: var(--bg-elev); border: 1px solid var(--border);
 		padding: var(--sp-4);
 		transition: border-color var(--dur-fast) var(--ease-out),
 		            box-shadow var(--dur-fast) var(--ease-out);
+	}
+	.event.with-cover {
+		grid-template-areas: 'when body cover';
+		grid-template-columns: 110px 1fr 220px;
 	}
 	.event:hover {
 		border-color: var(--accent-pink);
 		box-shadow: 0 0 0 1px var(--accent-pink), 0 0 24px rgba(255, 0, 204, 0.18);
 	}
 
-	.when { display: flex; flex-direction: column; gap: var(--sp-1); }
+	.cover {
+		grid-area: cover;
+		display: block;
+		min-height: 180px;
+		max-height: 300px;
+		border: 1px solid var(--border);
+		overflow: hidden;
+	}
+	.cover img {
+		display: block;
+		width: 100%; height: 100%;
+		object-fit: cover;
+	}
+
+	.when { grid-area: when; display: flex; flex-direction: column; gap: var(--sp-1); }
 	.date {
 		font-family: var(--font-display); font-size: 20px; line-height: 1.05;
 		color: var(--accent-green);
 	}
 	.time { font-family: var(--font-mono); font-size: 11px; color: var(--mute); }
 
-	.body { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+	.body { grid-area: body; display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
 	.pills { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
 	h2 {
 		font-family: var(--font-display); font-weight: 400; font-size: 22px;
@@ -202,8 +239,14 @@
 
 	footer { text-align: center; padding: var(--sp-8) 0; color: var(--mute); font-size: 10px; letter-spacing: 2px; }
 
-	@media (max-width: 560px) {
-		.event { grid-template-columns: 1fr; gap: var(--sp-2); }
+	@media (max-width: 720px) {
+		.event {
+			grid-template-areas: 'when' 'body';
+			grid-template-columns: 1fr;
+			gap: var(--sp-2);
+		}
+		.event.with-cover { grid-template-areas: 'cover' 'when' 'body'; }
+		.cover { min-height: 0; height: 200px; }
 		.when { flex-direction: row; align-items: baseline; gap: var(--sp-2); }
 	}
 </style>

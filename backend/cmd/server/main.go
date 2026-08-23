@@ -123,6 +123,7 @@ func main() {
 		r.Route("/webreg/admin", webregHandler.AdminRoutes)
 
 		r.Get("/tg-events", tgHandler.List)
+		r.Get("/tg-events/{id}/cover", tgHandler.Cover)
 		r.Put("/tg-events/admin/bulk", tgHandler.AdminBulkUpsert)
 
 		r.Route("/admin", func(r chi.Router) {
