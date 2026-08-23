@@ -11,7 +11,10 @@
 
 <header class="nav">
   <a href="/" class="logo">АФИША_ВШАГЕ</a>
-  <a class="cta" href="#app">↓ В ПРИЛОЖЕНИИ</a>
+  <nav class="links">
+    <a class="uni" href="/uni">СТУДСОБЫТИЯ</a>
+    <a class="cta" href="#app">↓ В ПРИЛОЖЕНИИ</a>
+  </nav>
 </header>
 
 <main>
@@ -34,6 +37,9 @@
     position: sticky; top: 0; background: rgba(10,10,10,0.9); backdrop-filter: blur(8px); z-index: 10;
   }
   .logo { font-family: var(--font-display); font-size: 14px; color: var(--accent-pink); letter-spacing: 1px; }
+  .links { display: flex; align-items: center; gap: var(--sp-3); }
+  .uni { font-size: 10px; font-weight: 700; letter-spacing: 1px; color: var(--accent-green); border: 1px solid var(--accent-green); padding: 3px 9px; }
+  .uni:hover { background: var(--accent-green); color: #000; }
   .cta { background: var(--accent-green); color: #000; padding: 4px 10px; font-size: 10px; font-weight: 700; letter-spacing: 1px; }
   main { padding: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-4); max-width: 1280px; margin: 0 auto; }
   footer { text-align: center; padding: var(--sp-8) 0; color: var(--mute); font-size: 10px; letter-spacing: 2px; }

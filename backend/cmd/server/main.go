@@ -16,6 +16,7 @@ import (
 	"github.com/pythonjsgo/vshage-afisha/internal/config"
 	"github.com/pythonjsgo/vshage-afisha/internal/events"
 	"github.com/pythonjsgo/vshage-afisha/internal/health"
+	"github.com/pythonjsgo/vshage-afisha/internal/tgevents"
 	"github.com/pythonjsgo/vshage-afisha/internal/webreg"
 	"github.com/pythonjsgo/vshage-afisha/pkg/db"
 	"github.com/pythonjsgo/vshage-afisha/pkg/middleware"
@@ -72,7 +73,7 @@ func main() {
 		log.Print("webreg: WEBREG_IP_SALT unset — using an ephemeral per-process salt")
 	}
 	if cfg.WebregAdminToken == "" {
-		log.Print("webreg: WEBREG_ADMIN_TOKEN unset — event config endpoint is disabled")
+		log.Print("webreg: WEBREG_ADMIN_TOKEN unset — event config endpoint is disabled (и импорт tg-events тоже)")
 	}
 	submitLog := webreg.NewSubmitLog(cfg.WebregLogPath)
 	defer func() { _ = submitLog.Close() }()
@@ -81,6 +82,12 @@ func main() {
 
 	// События веб-регистрации показываются и в общей ленте афиши.
 	evHandler = evHandler.WithExtraSource(webregRepo)
+
+	// Витрина событий из телеграм-каналов (конвейер vshage-geo). Свой
+	// контур: /api/tg-events + страница /uni, в общую ленту не подмешивается
+	// (см. пояснение в internal/tgevents). Админ-токен общий с webreg.
+	tgRepo := tgevents.NewRepository(pool)
+	tgHandler := tgevents.NewHandler(tgRepo, cfg.WebregAdminToken)
 
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
@@ -114,6 +121,9 @@ func main() {
 			webregHandler.Routes(r, webregLimit)
 		})
 		r.Route("/webreg/admin", webregHandler.AdminRoutes)
+
+		r.Get("/tg-events", tgHandler.List)
+		r.Put("/tg-events/admin/bulk", tgHandler.AdminBulkUpsert)
 
 		r.Route("/admin", func(r chi.Router) {
 			r.Use(admin.AuthMiddleware(cfg.AdminJWTSecret))
