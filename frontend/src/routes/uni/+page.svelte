@@ -245,7 +245,10 @@
 			grid-template-columns: 1fr;
 			gap: var(--sp-2);
 		}
-		.event.with-cover { grid-template-areas: 'cover' 'when' 'body'; }
+		.event.with-cover {
+			grid-template-areas: 'cover' 'when' 'body';
+			grid-template-columns: 1fr;
+		}
 		.cover { min-height: 0; height: 200px; }
 		.when { flex-direction: row; align-items: baseline; gap: var(--sp-2); }
 	}
