@@ -167,6 +167,8 @@ func main() {
 		})
 	})
 
+	events.StartNotifySender(ctx, pool, cfg.TGBotToken, cfg.TGChatID)
+
 	log.Printf("afisha-backend listening on :%s", cfg.Port)
 	if err := http.ListenAndServe(":"+cfg.Port, r); err != nil {
 		log.Fatal(err)

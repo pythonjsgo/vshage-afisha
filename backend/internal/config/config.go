@@ -20,6 +20,10 @@ type Config struct {
 	// endpoint refuses every request — fail closed, so a stand that forgot
 	// the secret cannot be reconfigured by anyone who finds the URL.
 	WebregAdminToken string
+	// TGBotToken/TGChatID — куда дублировать каждую регистрацию (outbox,
+	// internal/events/notify.go). Пустые = уведомления выключены, с криком в лог.
+	TGBotToken string
+	TGChatID   string
 
 	// TGInFeed подмешивает студсобытия в общую ленту афиши. Флаг, а не
 	// константа, потому что знание про их id живёт в ДВУХ образах: бэкенд
@@ -49,6 +53,8 @@ func Load() (*Config, error) {
 		LogLevel:       envDefault("LOG_LEVEL", "info"),
 
 		WebregAdminToken: os.Getenv("WEBREG_ADMIN_TOKEN"),
+		TGBotToken:       os.Getenv("TG_BOT_TOKEN"),
+		TGChatID:         os.Getenv("TG_CHAT_ID"),
 		TGInFeed:         os.Getenv("AFISHA_TG_IN_FEED") == "1",
 		WebregLogPath:    os.Getenv("WEBREG_LOG_PATH"),
 		WebregIPSalt:     os.Getenv("WEBREG_IP_SALT"),

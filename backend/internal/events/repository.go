@@ -153,6 +153,7 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 
 	var ev struct {
 		ID           string
+		Title        string
 		Status       string
 		StartTime    time.Time
 		MaxAttendees *int
@@ -164,7 +165,7 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 	}
 	err = tx.QueryRow(ctx, `
 		SELECT
-			e.id, e.status, e.start_time, e.max_attendees,
+			e.id, e.title, e.status, e.start_time, e.max_attendees,
 			COALESCE(d.registration_mode, 'auto'),
 			COALESCE(d.visibility, 'public'),
 			d.external_registration_url,
@@ -175,7 +176,7 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 		LEFT JOIN organizer_event_details d ON d.event_id = e.id
 		WHERE e.id = $1
 		FOR UPDATE OF e
-	`, eventID).Scan(&ev.ID, &ev.Status, &ev.StartTime, &ev.MaxAttendees, &ev.RegMode, &ev.Visibility, &ev.ExternalURL, &ev.Deadline, &ev.Registered)
+	`, eventID).Scan(&ev.ID, &ev.Title, &ev.Status, &ev.StartTime, &ev.MaxAttendees, &ev.RegMode, &ev.Visibility, &ev.ExternalURL, &ev.Deadline, &ev.Registered)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, &RegistrationError{Status: http.StatusNotFound, Code: "event_not_found", Message: "Событие не найдено"}
@@ -242,6 +243,10 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 		`, eventID, profileID, status, name, contact).Scan(&existingID, &existingStatus); err != nil {
 			return nil, err
 		}
+		if err := enqueueNotify(ctx, tx, registrationMessage(ev.Title, name, contact,
+			existingStatus, existingID, ev.Registered+1, ev.MaxAttendees, ev.StartTime, true)); err != nil {
+			return nil, err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return nil, err
 		}
@@ -262,6 +267,10 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
 	`, eventID, profileID, status, name, contact).Scan(&registrationID); err != nil {
+		return nil, err
+	}
+	if err := enqueueNotify(ctx, tx, registrationMessage(ev.Title, name, contact,
+		status, registrationID, ev.Registered+1, ev.MaxAttendees, ev.StartTime, false)); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
