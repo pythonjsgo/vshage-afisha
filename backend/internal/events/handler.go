@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"sort"
 	"strconv"
 	"time"
 
@@ -15,27 +14,56 @@ import (
 )
 
 // ExtraSource — дополнительный источник событий для ленты афиши.
-// Реализуется пакетом webreg: события веб-регистрации живут в своих
-// таблицах, но фаундер хочет видеть их в общей афише (директива 17.08).
-// Интерфейс объявлен здесь, чтобы webreg зависел от events, а не наоборот.
+// Реализуют пакеты webreg (события веб-регистрации, директива 17.08) и
+// tgevents (студсобытия из телеграм-каналов, директива 30.08). Интерфейс
+// объявлен здесь, чтобы источники зависели от events, а не наоборот.
+//
+// Пагинация — часть контракта, а не удобство. Источник обязан уметь отдать
+// СВОЁ окно [offset, offset+limit) по возрастанию времени начала и своё общее
+// число: до 30.08 шов брал у источника всё и приклеивал к уже обрезанной
+// странице, поэтому вторая страница повторяла первую, а total не равнялся
+// числу событий, которые лента способна отдать. Пока источник был один и
+// отдавал единицы событий, оба дефекта были незаметны.
 type ExtraSource interface {
-	UpcomingForAfisha(ctx context.Context, since time.Time) ([]PublicEvent, error)
+	UpcomingForAfisha(ctx context.Context, since time.Time, limit, offset int) ([]PublicEvent, error)
+	CountUpcomingForAfisha(ctx context.Context, since time.Time) (int, error)
+}
+
+// Потолки страницы. Раньше их роль играли разрозненные `> 100 → 30` внутри
+// источников: не потолок, а тихая подмена запрошенного окна.
+const (
+	defaultPageSize = 30
+	maxPageSize     = 100
+	maxWindow       = 300
+)
+
+// sourceName — имя источника для поля degraded и для лога. Без него отказ
+// одного из двух сторов неотличим в ответе от «в нём просто ничего нет».
+func sourceName(s ExtraSource) string {
+	if n, ok := s.(interface{ AfishaSourceName() string }); ok {
+		return n.AfishaSourceName()
+	}
+	return "extra"
 }
 
 type Handler struct {
 	repo  *Repository
 	cache *Cache
-	extra ExtraSource
+	extra []ExtraSource
 }
 
 func NewHandler(r *Repository, c *Cache) *Handler {
 	return &Handler{repo: r, cache: c}
 }
 
-// WithExtraSource подключает дополнительный источник событий (webreg).
-// Опционален: без него лента ведёт себя ровно как раньше.
+// WithExtraSource подключает дополнительный источник событий.
+// Источников может быть несколько, и они ДОБАВЛЯЮТСЯ: раньше здесь было одно
+// поле, и второй вызов молча вытеснял первый — то есть подключить студсобытия
+// значило бы выключить веб-регистрацию, ничего об этом не сказав.
 func (h *Handler) WithExtraSource(s ExtraSource) *Handler {
-	h.extra = s
+	if s != nil {
+		h.extra = append(h.extra, s)
+	}
 	return h
 }
 
@@ -50,39 +78,89 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, listErr := h.repo.List(ctx, ListQuery{Limit: limit, Offset: offset})
+	// Вход валидируется ЗДЕСЬ и явно. Раньше потолки стояли внутри каждого
+	// источника и при превышении не обрезали окно, а откатывались к 30 —
+	// то есть глубокая страница молча теряла события основного стора и
+	// выглядела полной. Отказ лучше тихой полуправды: `?offset=1000` — это
+	// ошибка вызывающего, а не повод показать неверную ленту.
+	if limit <= 0 {
+		limit = defaultPageSize
+	}
+	if limit > maxPageSize {
+		writeError(w, http.StatusBadRequest,
+			"limit больше "+strconv.Itoa(maxPageSize))
+		return
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	// Слияние требует от КАЖДОГО источника его первые offset+limit событий,
+	// иначе окно вырезать не из чего (см. MergePage).
+	window := offset + limit
+	if window > maxWindow {
+		writeError(w, http.StatusBadRequest,
+			"offset+limit больше "+strconv.Itoa(maxWindow)+" — лента столько не отдаёт")
+		return
+	}
+	result, listErr := h.repo.List(ctx, ListQuery{Limit: window, Offset: 0})
 	if listErr != nil {
 		log.Printf("events.List: %v", listErr)
 	}
 
-	// Два источника, и ни один не отменяет другой. Событие живой
-	// веб-регистрации обязано быть видно, даже если запрос к общим
-	// таблицам отвалился, — и наоборот. Пустой ответ отдаём только когда
-	// молчат оба.
-	var extra []PublicEvent
-	if h.extra != nil {
-		var extraErr error
-		extra, extraErr = h.extra.UpcomingForAfisha(ctx, time.Now().Add(-24*time.Hour))
-		if extraErr != nil {
-			log.Printf("events.List: extra source: %v", extraErr)
+	// Источники не отменяют друг друга. Событие живой веб-регистрации
+	// обязано быть видно, даже если запрос к общим таблицам отвалился, — и
+	// наоборот. Пустой ответ отдаём только когда молчат все.
+	pages := [][]PublicEvent{}
+	extraTotal, extraCount := 0, 0
+	degraded := []string{}
+	if listErr != nil {
+		degraded = append(degraded, "main")
+	}
+	since := time.Now().Add(-24 * time.Hour)
+	for _, src := range h.extra {
+		name := sourceName(src)
+		page, err := src.UpcomingForAfisha(ctx, since, window, 0)
+		if err != nil {
+			log.Printf("events.List: источник %s: %v", name, err)
+			degraded = append(degraded, name)
+			continue
 		}
+		n, err := src.CountUpcomingForAfisha(ctx, since)
+		if err != nil {
+			// Считать «сколько всего» и «отдать страницу» — разные запросы, и
+			// отказ первого не повод прятать второй: берём хотя бы то, что
+			// видим сами. Но молча занижать total нельзя — это видимое
+			// человеку число («ВСЕ СОБЫТИЯ · N»), и заниженное выглядит
+			// достоверным.
+			log.Printf("events.List: счётчик источника %s: %v", name, err)
+			degraded = append(degraded, name+":count")
+			n = len(page)
+		}
+		pages = append(pages, page)
+		extraTotal += n
+		extraCount += len(page)
 	}
 
-	if listErr != nil && len(extra) == 0 {
+	if listErr != nil && extraCount == 0 {
 		writeError(w, http.StatusInternalServerError, "list failed")
 		return
 	}
 	if listErr != nil {
 		result = ListResult{Featured: []PublicEvent{}, All: []PublicEvent{}}
 	}
-	if len(extra) > 0 {
-		result.All = append(extra, result.All...)
-		sort.SliceStable(result.All, func(i, j int) bool {
-			return result.All[i].StartTime.Before(result.All[j].StartTime)
-		})
-		result.Total += len(extra)
+	pages = append([][]PublicEvent{result.All}, pages...)
+	result.All = MergePage(pages, limit, offset)
+	result.Total += extraTotal
+	result.Degraded = degraded
+
+	// Деградированный ответ НЕ кэшируем. Иначе разовая икота одного стора
+	// замерзает в редисе на минуту и раздаётся всем — включая те секунды,
+	// когда база уже здорова, а причина уже уехала из логов. И именно такой
+	// ответ невозможно отличить от честной ленты: 200, события есть, просто
+	// не все.
+	if len(degraded) == 0 {
+		h.cache.SetList(ctx, key, result, 60*time.Second)
 	}
-	h.cache.SetList(ctx, key, result, 60*time.Second)
 	writeJSON(w, http.StatusOK, result)
 }
 

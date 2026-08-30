@@ -4,6 +4,8 @@ import type { PublicEvent } from '$lib/types';
 import type { WebregEvent } from '$lib/webreg';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Импортированное студсобытие: ev_ + хеш карточки (vshage-geo/collect/tg_event_cards.py).
+const TG_ID_RE = /^ev_[0-9a-f]{6,}$/i;
 
 /**
  * Maps a web-registration event onto the board's event shape so one detail
@@ -43,6 +45,20 @@ function fromWebreg(ev: WebregEvent): PublicEvent {
 
 export const load: PageServerLoad = async ({ params, fetch, setHeaders }) => {
 	const backend = process.env.BACKEND_INTERNAL_URL ?? 'http://localhost:3003';
+
+	// Импортированное студсобытие: id вида ev_<хеш>, своя таблица, свой
+	// эндпоинт. Проверка идёт ПЕРЕД веб-регистрацией — иначе ev_* уходил бы
+	// в /api/e/<slug> как слаг и отвечал 404 (это и было третьим
+	// препятствием, из-за которого 23.08 завели отдельную страницу /uni).
+	// Бэкенд отдаёт здесь уже готовый PublicEvent, поэтому маппер не нужен.
+	if (TG_ID_RE.test(params.id)) {
+		const res = await fetch(`${backend}/api/tg-events/${encodeURIComponent(params.id)}`);
+		if (res.status === 404) throw error(404, 'Событие не найдено');
+		if (!res.ok) throw error(500, 'Сервер недоступен');
+		const ev = (await res.json()) as PublicEvent;
+		setHeaders({ 'Cache-Control': 'public, max-age=60, stale-while-revalidate=300' });
+		return { event: ev };
+	}
 
 	// A slug that is not a UUID can only be a web-registration event; the
 	// shared events table is keyed by UUID and would answer 404 for it.

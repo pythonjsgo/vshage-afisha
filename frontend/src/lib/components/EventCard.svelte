@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PublicEvent } from '$lib/types';
-  import { formatEventDate } from '$lib/dateFormat';
+  import { formatEventDate, formatEndDate } from '$lib/dateFormat';
   import MetaPill from './MetaPill.svelte';
 
   let { event }: { event: PublicEvent } = $props();
@@ -10,6 +10,15 @@
   const href = $derived(event.webreg_slug ? `/${event.webreg_slug}` : `/${event.id}`);
   const cancelled = $derived(event.status === 'cancelled');
   const category = $derived(event.category?.toUpperCase() ?? '');
+  const imported = $derived(event.source === 'tg');
+  // У импортированных студсобытий рубрики нет, зато есть уровень доступа —
+  // человеку до клика важнее знать, пустят ли его, чем что это «событие».
+  const accessLabel = $derived(
+    event.access_level === 'university' ? 'ДЛЯ СТУДЕНТОВ'
+    : event.access_level === 'invite' ? 'ПО ПРИГЛАШЕНИЮ'
+    : event.access_level === 'open' ? 'ОТКРЫТЫЙ ВХОД'
+    : ''
+  );
 </script>
 
 <a {href} class="card" class:cancelled>
@@ -28,11 +37,16 @@
         <MetaPill text="Отменено" variant="warning" />
       {:else if category}
         <MetaPill text={category} />
+      {:else if accessLabel}
+        <MetaPill text={accessLabel} />
       {/if}
     </div>
     <h3>{event.title}</h3>
     <div class="meta">
-      <span class="date">{formatEventDate(event.start_time)}</span>
+      <span class="date">
+        {formatEventDate(event.start_time, new Date(), event.start_time_known !== false)}
+        {#if event.end_time}<span class="until">· {formatEndDate(event.end_time)}</span>{/if}
+      </span>
       {#if event.attendee_count > 0}
         <span class="att">· {event.attendee_count} идут</span>
       {/if}
@@ -94,6 +108,9 @@
   }
   .meta { font-size: 11px; color: var(--mute); }
   .date { color: var(--accent-green); }
+  /* Конец многодневной программы — тише даты начала: это уточнение, а не
+     вторая дата. */
+  .until { opacity: 0.65; }
   .org {
     font-size: 10px;
     color: var(--mute);

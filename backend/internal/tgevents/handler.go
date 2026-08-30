@@ -34,22 +34,24 @@ func NewHandler(repo *Repository, adminToken string) *Handler {
 	return &Handler{repo: repo, adminToken: adminToken}
 }
 
-// List — GET /api/tg-events: предстоящие события витрины.
-func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
-	cards, err := h.repo.ListUpcoming(r.Context(), time.Now().In(msk), 100)
-	if err != nil {
-		log.Printf("tgevents.List: %v", err)
-		writeJSON(w, http.StatusInternalServerError,
-			map[string]string{"error": "internal"})
+// Get — GET /api/tg-events/{id}: одна карточка в контракте ленты
+// (events.PublicEvent), чтобы страница события открывалась тем же кодом, что
+// и у остальных. Отдаём ИМЕННО PublicEvent, а не Card: у Card наружу торчит
+// payload с чужим текстом поста, и один невнимательный маршалинг сделал бы
+// его публичным.
+func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
+	ev, err := h.repo.GetByID(r.Context(), chi.URLParam(r, "id"))
+	if errors.Is(err, ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
-	// Тот же короткий shared-кэш, что у страницы событий: витрина обновляется
-	// импортом раз в дни, но врать дольше пары минут незачем.
+	if err != nil {
+		log.Printf("tgevents.Get: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
+		return
+	}
 	w.Header().Set("Cache-Control", "public, max-age=60, stale-while-revalidate=300")
-	writeJSON(w, http.StatusOK, map[string]any{
-		"events": cards,
-		"count":  len(cards),
-	})
+	writeJSON(w, http.StatusOK, ev)
 }
 
 // Cover — GET /api/tg-events/{id}/cover: байты обложки со своего origin.

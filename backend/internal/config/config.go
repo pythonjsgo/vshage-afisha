@@ -20,6 +20,16 @@ type Config struct {
 	// endpoint refuses every request — fail closed, so a stand that forgot
 	// the secret cannot be reconfigured by anyone who finds the URL.
 	WebregAdminToken string
+
+	// TGInFeed подмешивает студсобытия в общую ленту афиши. Флаг, а не
+	// константа, потому что знание про их id живёт в ДВУХ образах: бэкенд
+	// начинает отдавать id вида ev_*, а открывать их умеет только новый
+	// фронт. Прод-выкатка посервисная — выкатив бэкенд первым, мы получили
+	// бы ленту, где каждая импортированная карточка ведёт в 404, и заметил
+	// бы это посетитель, а не мы. С флагом порядок выкатки перестаёт быть
+	// тихим условием правильности: оба образа едут выключенными, флаг
+	// поднимается третьим шагом и опускается за секунду, если что-то не так.
+	TGInFeed bool
 	// WebregLogPath optionally mirrors submissions to a file; stdout always
 	// gets them regardless.
 	WebregLogPath string
@@ -39,6 +49,7 @@ func Load() (*Config, error) {
 		LogLevel:       envDefault("LOG_LEVEL", "info"),
 
 		WebregAdminToken: os.Getenv("WEBREG_ADMIN_TOKEN"),
+		TGInFeed:         os.Getenv("AFISHA_TG_IN_FEED") == "1",
 		WebregLogPath:    os.Getenv("WEBREG_LOG_PATH"),
 		WebregIPSalt:     os.Getenv("WEBREG_IP_SALT"),
 	}

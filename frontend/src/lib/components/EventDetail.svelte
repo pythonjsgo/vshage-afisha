@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PublicEvent } from '$lib/types';
-  import { formatEventDateLong } from '$lib/dateFormat';
+  import { formatEventDateLong, formatEndDate } from '$lib/dateFormat';
   import MetaPill from './MetaPill.svelte';
   import GlitchText from './GlitchText.svelte';
   import ShareSheet from './ShareSheet.svelte';
@@ -13,6 +13,16 @@
   const cancelled = $derived(event.status === 'cancelled');
   const category = $derived(event.category?.toUpperCase() ?? '');
   const externalRegistration = $derived(event.registration_mode === 'external' && event.external_registration_url);
+  // Импортированное студсобытие. Признак ЯВНЫЙ (source), а не «есть
+  // source_url»: то поле nullable, и карточка без него превратилась бы в
+  // «наше» событие с нашей кнопкой записи на чужое мероприятие.
+  const imported = $derived(event.source === 'tg');
+  const accessLabel = $derived(
+    event.access_level === 'university' ? 'ДЛЯ СТУДЕНТОВ'
+    : event.access_level === 'invite' ? 'ПО ПРИГЛАШЕНИЮ'
+    : event.access_level === 'open' ? 'ОТКРЫТЫЙ ВХОД'
+    : ''
+  );
 </script>
 
 <article class="detail" class:cancelled>
@@ -25,6 +35,7 @@
         {#if cancelled}<MetaPill text="Отменено" variant="warning" />{/if}
         {#if category}<MetaPill text={category} />{/if}
         {#if event.max_attendees}<MetaPill text={`LIMIT ${event.max_attendees}`} />{/if}
+        {#if accessLabel}<MetaPill text={accessLabel} />{/if}
       </div>
     </div>
   </header>
@@ -34,7 +45,10 @@
   {/if}
 
   <section class="info">
-    <div class="row"><div class="k">КОГДА</div><div class="v">{formatEventDateLong(event.start_time)}</div></div>
+    <div class="row"><div class="k">КОГДА</div><div class="v">
+      {formatEventDateLong(event.start_time, event.start_time_known !== false)}
+      {#if event.end_time}<br />{formatEndDate(event.end_time)}{/if}
+    </div></div>
     {#if event.location}
       <div class="row"><div class="k">ГДЕ</div><div class="v">{event.location}</div></div>
     {/if}
@@ -66,19 +80,38 @@
   </section>
 
   <section class="register-sec">
-    {#if externalRegistration}
+    {#if imported}
+      <!-- Импортированный анонс: мы его не проводим и списков не ведём.
+           Кнопка «ЗАРЕГИСТРИРОВАТЬСЯ» здесь была бы обещанием, которого
+           никто не выполнит: у 26 карточек из 30 регистрации нет вовсе, а
+           у остальных она живёт на стороне организатора. Ведём к
+           первоисточнику — он же выполняет юр-условие показа. -->
+      {#if event.external_registration_url}
+        <a class="register-btn" href={event.external_registration_url} target="_blank" rel="noreferrer">РЕГИСТРАЦИЯ У ОРГАНИЗАТОРА</a>
+      {/if}
+      {#if event.source_url}
+        <a class="source-btn" href={event.source_url} target="_blank" rel="noreferrer">АНОНС-ПЕРВОИСТОЧНИК →</a>
+      {/if}
+    {:else if externalRegistration}
       <a class="register-btn" href={event.external_registration_url} target="_blank" rel="noreferrer">ЗАРЕГИСТРИРОВАТЬСЯ</a>
     {:else}
       <a class="register-btn" href={`/events/${event.id}/register`}>ЗАРЕГИСТРИРОВАТЬСЯ</a>
     {/if}
   </section>
 
-  <section class="cta-sec">
-    <AppCTA eventId={event.id} />
-  </section>
+  {#if !imported}
+    <section class="cta-sec">
+      <AppCTA eventId={event.id} />
+    </section>
+  {/if}
 </article>
 
 <style>
+  .source-btn {
+    display: block; text-align: center; margin-top: var(--sp-2);
+    padding: var(--sp-2); border: 1px solid var(--fg);
+    font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+  }
   .detail.cancelled { opacity: 0.65; filter: grayscale(1); }
   .cover {
     position: relative;

@@ -41,6 +41,22 @@ type PublicEvent struct {
 	// веб-регистрации (см. internal/webreg). Фронт по нему строит ссылку
 	// на /e/<slug> вместо /<uuid>.
 	WebregSlug string `json:"webreg_slug,omitempty"`
+	// SourceURL — ссылка на первоисточник анонса (см. internal/tgevents).
+	// Для импортированных событий это не украшение, а условие, на котором
+	// мы их вообще показываем: наш текст плюс подписанный источник.
+	SourceURL *string `json:"source_url,omitempty"`
+	// AccessLevel — «open» / «university» / «invite» у импортированных
+	// событий. Человеку важно до клика понимать, пустят ли его.
+	AccessLevel *string `json:"access_level,omitempty"`
+	// Source — откуда событие: пусто у наших, "tg" у импортированных.
+	// ЯВНЫЙ дискриминатор, а не вывод из наличия source_url: тот nullable,
+	// и карточка без него превращалась бы в «наше» событие с нашей кнопкой
+	// записи на чужое мероприятие.
+	Source *string `json:"source,omitempty"`
+	// StartTimeKnown=false означает «дата известна, времени нет». Без этого
+	// признака полночь неотличима от настоящего начала в 00:00, а фронт
+	// печатает её как время события.
+	StartTimeKnown *bool `json:"start_time_known,omitempty"`
 }
 
 type ListQuery struct {
@@ -54,6 +70,11 @@ type ListResult struct {
 	Featured []PublicEvent `json:"featured"`
 	All      []PublicEvent `json:"all"`
 	Total    int           `json:"total"`
+	// Degraded перечисляет источники ленты, которые не ответили. Пустой
+	// список — все живы. Без этого поля отказ источника выглядит как «в нём
+	// ничего нет»: ответ 200, лента непустая, просто без половины событий, и
+	// отличить одно от другого нечем — логи PROD в Loki не доезжают.
+	Degraded []string `json:"degraded,omitempty"`
 }
 
 type PublicRegistrationInput struct {

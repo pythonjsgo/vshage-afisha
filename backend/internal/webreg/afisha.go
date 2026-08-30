@@ -20,7 +20,18 @@ import (
 // The filter is publish_afisha, not registration_open: an event whose seats
 // are gone is still a real event happening in the city, and dropping it off
 // the board the moment it fills up hides exactly the events worth seeing.
-func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time) ([]events.PublicEvent, error) {
+func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time, limit, offset int) ([]events.PublicEvent, error) {
+	// Клампинг, а не откат: просили больше потолка — отдаём потолок.
+	// Откат к 30 означал бы «страница набрана», когда она не набрана.
+	if limit <= 0 {
+		limit = 30
+	}
+	if limit > 300 {
+		limit = 300
+	}
+	if offset < 0 {
+		offset = 0
+	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT slug, title, tagline, description, cover_url, starts_at, ends_at,
 		       venue, organizer_title, capacity,
@@ -28,8 +39,8 @@ func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time) ([]
 		FROM webreg_events e
 		WHERE publish_afisha AND starts_at >= $1
 		ORDER BY starts_at ASC
-		LIMIT 50
-	`, since)
+		LIMIT $2 OFFSET $3
+	`, since, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -87,6 +98,21 @@ func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time) ([]
 	}
 	return out, rows.Err()
 }
+
+// CountUpcomingForAfisha — сколько всего событий веб-регистрации попадёт в
+// ленту. Тот же WHERE, что и в выборке: разойдутся условия — разойдётся
+// «показано N из M», и заметит это не тест, а человек, долиставший до конца.
+func (r *Repository) CountUpcomingForAfisha(ctx context.Context, since time.Time) (int, error) {
+	var n int
+	err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM webreg_events
+		WHERE publish_afisha AND starts_at >= $1
+	`, since).Scan(&n)
+	return n, err
+}
+
+// AfishaSourceName — как источник называется в поле degraded ленты.
+func (r *Repository) AfishaSourceName() string { return "webreg" }
 
 func nonEmpty(s *string) *string {
 	if s == nil || *s == "" {

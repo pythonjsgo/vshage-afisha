@@ -68,9 +68,15 @@ func (r *Repository) List(ctx context.Context, q ListQuery) (ListResult, error) 
 		return ListResult{}, err
 	}
 
+	// Потолок общий с хендлером (maxWindow): раньше здесь стояло `> 100 → 30`,
+	// и слияние получало 30 событий там, где просило 200 — страница выглядела
+	// полной, а событий основного стора в ней не было вовсе.
 	limit := q.Limit
-	if limit <= 0 || limit > 100 {
-		limit = 30
+	if limit <= 0 {
+		limit = defaultPageSize
+	}
+	if limit > maxWindow {
+		limit = maxWindow
 	}
 	all, err := r.query(ctx, `
 		SELECT `+selectCols+selectFrom+`

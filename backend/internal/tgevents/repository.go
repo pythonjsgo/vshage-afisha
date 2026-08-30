@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,6 +13,9 @@ import (
 
 // ErrNoCover — у события нет обложки (или самого события): хендлер отвечает 404.
 var ErrNoCover = errors.New("обложки нет")
+
+// ErrNotFound — карточки с таким id нет или она снята с витрины.
+var ErrNotFound = errors.New("события нет")
 
 type Repository struct {
 	pool *pgxpool.Pool
@@ -105,50 +107,6 @@ func (r *Repository) UpsertBulk(ctx context.Context, cards []Card) (int, error) 
 		return 0, fmt.Errorf("commit: %w", err)
 	}
 	return n, nil
-}
-
-// ListUpcoming — предстоящие нескрытые события: идёт сегодня или позже
-// (для многодневных смотрим date_end). Сортировка — ближайшие первыми.
-func (r *Repository) ListUpcoming(ctx context.Context, now time.Time, limit int) ([]Card, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 100
-	}
-	today := now.Format(dateLayout)
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, title, annonce,
-		       to_char(date, 'YYYY-MM-DD'),
-		       to_char(date_end, 'YYYY-MM-DD'),
-		       time_start, city, place_name, address, online,
-		       price_raw, is_free, registration_url, access_level,
-		       segment, org_name, source_url,
-		       (cover IS NOT NULL) AS has_cover
-		FROM afisha_tg_events
-		WHERE NOT hidden
-		  AND COALESCE(date_end, date) >= $1
-		ORDER BY date, time_start NULLS LAST, id
-		LIMIT $2`, today, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	out := []Card{}
-	for rows.Next() {
-		var c Card
-		var hasCover bool
-		if err := rows.Scan(&c.ID, &c.Title, &c.Annonce, &c.Date, &c.DateEnd,
-			&c.TimeStart, &c.City, &c.PlaceName, &c.Address, &c.Online,
-			&c.PriceRaw, &c.IsFree, &c.RegistrationURL, &c.AccessLevel,
-			&c.Segment, &c.OrgName, &c.SourceURL, &hasCover); err != nil {
-			return nil, err
-		}
-		if hasCover {
-			// Свой origin, не CDN телеги: тот протухает за дни (замер 23.08).
-			c.CoverURL = "/api/tg-events/" + c.ID + "/cover"
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
 }
 
 // Cover — байты обложки для отдачи браузеру. ErrNoCover, если события нет,

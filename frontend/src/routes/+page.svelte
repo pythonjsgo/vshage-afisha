@@ -12,7 +12,6 @@
 <header class="nav">
   <a href="/" class="logo">АФИША_ВШАГЕ</a>
   <nav class="links">
-    <a class="uni" href="/uni">СТУДСОБЫТИЯ</a>
     <a class="cta" href="#app">↓ В ПРИЛОЖЕНИИ</a>
   </nav>
 </header>
@@ -22,7 +21,14 @@
     <HeroFeatured events={data.featured} />
   {/if}
 
-  <EventGrid events={data.all} label={`ВСЕ СОБЫТИЯ · ${data.total}`} />
+  <!-- Подпись честная: «ВСЕ СОБЫТИЯ · 300» над тридцатью карточками
+       читается как поломка выдачи, а не как пагинация, которой тут нет. -->
+  <EventGrid
+    events={data.all}
+    label={data.all.length < data.total
+      ? `СОБЫТИЯ · ${data.all.length} ИЗ ${data.total}`
+      : `ВСЕ СОБЫТИЯ · ${data.total}`}
+  />
 </main>
 
 <footer>
@@ -38,8 +44,6 @@
   }
   .logo { font-family: var(--font-display); font-size: 14px; color: var(--accent-pink); letter-spacing: 1px; }
   .links { display: flex; align-items: center; gap: var(--sp-3); }
-  .uni { font-size: 10px; font-weight: 700; letter-spacing: 1px; color: var(--accent-green); border: 1px solid var(--accent-green); padding: 3px 9px; }
-  .uni:hover { background: var(--accent-green); color: #000; }
   .cta { background: var(--accent-green); color: #000; padding: 4px 10px; font-size: 10px; font-weight: 700; letter-spacing: 1px; }
   main { padding: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-4); max-width: 1280px; margin: 0 auto; }
   footer { text-align: center; padding: var(--sp-8) 0; color: var(--mute); font-size: 10px; letter-spacing: 2px; }

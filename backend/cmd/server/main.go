@@ -80,14 +80,24 @@ func main() {
 	webregRepo := webreg.NewRepository(pool, ipSalt)
 	webregHandler := webreg.NewHandler(webregRepo, cfg.WebregAdminToken, submitLog)
 
-	// События веб-регистрации показываются и в общей ленте афиши.
-	evHandler = evHandler.WithExtraSource(webregRepo)
-
-	// Витрина событий из телеграм-каналов (конвейер vshage-geo). Свой
-	// контур: /api/tg-events + страница /uni, в общую ленту не подмешивается
-	// (см. пояснение в internal/tgevents). Админ-токен общий с webreg.
+	// Студсобытия из телеграм-каналов (конвейер vshage-geo). Админ-токен
+	// общий с webreg — один админ афиши, один секрет.
 	tgRepo := tgevents.NewRepository(pool)
 	tgHandler := tgevents.NewHandler(tgRepo, cfg.WebregAdminToken)
+
+	// Оба дополнительных источника показываются в ОБЩЕЙ ленте афиши:
+	// веб-регистрация (директива 17.08) и студсобытия (директива 30.08,
+	// отдельной страницы /uni больше нет). Порядок вызовов роли не играет —
+	// лента сливает источники по времени начала (events.MergePage), — но
+	// подключать надо ОБА: до 30.08 поле было одно, и второй вызов молча
+	// вытеснил бы первый.
+	evHandler = evHandler.WithExtraSource(webregRepo)
+	if cfg.TGInFeed {
+		evHandler = evHandler.WithExtraSource(tgRepo)
+		log.Printf("afisha: студсобытия подмешаны в ленту (AFISHA_TG_IN_FEED=1)")
+	} else {
+		log.Printf("afisha: студсобытия в ленту НЕ подмешаны (AFISHA_TG_IN_FEED не задан)")
+	}
 
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
@@ -122,7 +132,11 @@ func main() {
 		})
 		r.Route("/webreg/admin", webregHandler.AdminRoutes)
 
-		r.Get("/tg-events", tgHandler.List)
+		// GET /api/tg-events снят вместе со страницей /uni: потребителя не
+		// осталось, а он единственный отдавал наружу структуру Card, у
+		// которой есть payload с дословным текстом чужого поста. Запрет
+		// должен держать отсутствие ручки, а не аккуратность SELECT'а.
+		r.Get("/tg-events/{id}", tgHandler.Get)
 		r.Get("/tg-events/{id}/cover", tgHandler.Cover)
 		r.Put("/tg-events/admin/bulk", tgHandler.AdminBulkUpsert)
 

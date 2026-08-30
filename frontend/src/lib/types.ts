@@ -32,10 +32,24 @@ export interface PublicEvent {
   organizer_name?: string;
   organizer_photo?: string;
   photos?: string[];
+  /** Ссылка на первоисточник анонса у импортированных событий (tgevents).
+   *  Не украшение: показывать чужой анонс мы вправе только с подписанным
+   *  источником. */
+  source_url?: string;
+  /** open / university / invite — пустят ли человека. */
+  access_level?: string;
+  /** Откуда событие: пусто у наших, 'tg' у импортированных. Явный признак,
+   *  а не вывод из source_url: то поле nullable. */
+  source?: 'tg';
+  /** false = дата известна, времени нет (у импортированных это частый
+   *  случай). Без признака полночь неотличима от начала в 00:00. */
+  start_time_known?: boolean;
 }
 
 export interface ListResult {
   featured: PublicEvent[];
   all: PublicEvent[];
   total: number;
+  /** Источники ленты, которые не ответили. Пусто — все живы. */
+  degraded?: string[];
 }

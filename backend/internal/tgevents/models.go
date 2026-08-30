@@ -1,15 +1,23 @@
-// Package tgevents — витрина событий, импортированных из телеграм-каналов
-// конвейером vshage-geo (tg_harvest → грок-разбор → tg_event_cards.jsonl).
+// Package tgevents — события, импортированные из телеграм-каналов конвейером
+// vshage-geo (tg_harvest → грок-разбор → tg_event_cards.jsonl).
 //
 // Самостоятельный модуль по образцу webreg: свои таблицы (006_tg_events.sql),
-// ноль зависимостей от общей схемы events. В общую ленту через ExtraSource
-// сознательно НЕ подключается: у ExtraSource один слот (занят webreg) и нет
-// пагинации, а [id]-роут фронта принял бы наши не-UUID id за слаги
-// веб-регистрации. Своя страница /uni + свой эндпоинт /api/tg-events.
+// ноль зависимостей от общей схемы events. С 30.08 подключается в ОБЩУЮ ленту
+// афиши через events.ExtraSource (см. afisha.go) — отдельной страницы больше
+// нет. Три препятствия, из-за которых 23.08 завели отдельный контур, сняты:
+// шов стал многослотовым и пагинируемым, а одиночную карточку отдаёт
+// GET /api/tg-events/{id}, и фронт по префиксу ev_ идёт туда, а не в
+// веб-регистрацию.
+//
+// В таблицу events эти события НЕ пишутся сознательно: её читает приложение
+// (core-api фильтрует только status='published'), и строка там означала бы
+// как минимум чужие анонсы в ленте у сторовых билдов, а как максимум —
+// «регистрацию» на мероприятие, которым мы не управляем.
 package tgevents
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -64,12 +72,22 @@ var accessLevels = map[string]bool{
 }
 
 const dateLayout = "2006-01-02"
+const timeLayout = "15:04"
+
+// idRe — контракт id карточки (vshage-geo/collect/tg_event_cards.py:
+// "ev_" + первые 12 знаков sha1). Проверяется здесь, потому что здесь
+// граница доверия между конвейером и публичной поверхностью.
+var idRe = regexp.MustCompile(`^ev_[0-9a-f]{6,}$`)
 
 // Validate проверяет карточку перед записью. Возвращает описание первого
 // дефекта — импортёр печатает его рядом с id, чтобы брак был виден построчно.
 func (c *Card) Validate() error {
-	if strings.TrimSpace(c.ID) == "" {
-		return fmt.Errorf("пустой id")
+	// Формат id — не косметика: по нему фронт решает, в какой бэкенд идти за
+	// карточкой (routes/[id]/+page.server.ts). Контракт живёт в vshage-geo,
+	// а исполняется здесь: разойдётся генератор — карточка молча уедет в
+	// веб-регистрацию и даст посетителю 404, по одной, невидимо в агрегате.
+	if !idRe.MatchString(c.ID) {
+		return fmt.Errorf("id %q не вида ev_<hex>", c.ID)
 	}
 	if strings.TrimSpace(c.Title) == "" {
 		return fmt.Errorf("пустой title")
@@ -89,6 +107,14 @@ func (c *Card) Validate() error {
 	if !accessLevels[c.AccessLevel] {
 		return fmt.Errorf("access_level %q вне словаря", c.AccessLevel)
 	}
+	// «19:00» разбирается, «19.00», «9:00», «19:00-21:00» и «весь день» — нет,
+	// и молча становились бы полуночью, то есть неотличимы от «времени нет».
+	// Различить после записи уже невозможно — данные одинаковые.
+	if c.TimeStart != nil && strings.TrimSpace(*c.TimeStart) != "" {
+		if _, err := time.Parse(timeLayout, *c.TimeStart); err != nil {
+			return fmt.Errorf("time_start %q не HH:MM", *c.TimeStart)
+		}
+	}
 	// Ссылки рендерятся фронтом как href, а приходят из чужих постов —
 	// схема проверяется на границе доверия (здесь), а не только в экспортёре.
 	if err := validateURL("registration_url", c.RegistrationURL); err != nil {
@@ -96,6 +122,14 @@ func (c *Card) Validate() error {
 	}
 	if err := validateURL("source_url", c.SourceURL); err != nil {
 		return err
+	}
+	// Источник ОБЯЗАТЕЛЕН, а не желателен: показывать чужой анонс мы вправе
+	// только с подписанной ссылкой на первоисточник, и фронт по этому же полю
+	// понимает, что событие не наше и кнопки записи у него быть не должно.
+	// Пустое поле дало бы карточку с НАШЕЙ кнопкой «Зарегистрироваться» на
+	// чужое мероприятие — ровно то, ради чего мы вообще не пишем в events.
+	if c.SourceURL == nil || strings.TrimSpace(*c.SourceURL) == "" {
+		return fmt.Errorf("пустой source_url")
 	}
 	if c.CoverB64 != nil && *c.CoverB64 != "" {
 		if c.CoverMime == nil || !coverMimes[*c.CoverMime] {
