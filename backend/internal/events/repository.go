@@ -235,10 +235,11 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 		}
 		if err := tx.QueryRow(ctx, `
 			UPDATE event_registrations
-			SET status = $3, created_at = now()
+			SET status = $3, created_at = now(),
+			    signup_name = $4, signup_contact = $5
 			WHERE event_id = $1 AND profile_id = $2
 			RETURNING id, status
-		`, eventID, profileID, status).Scan(&existingID, &existingStatus); err != nil {
+		`, eventID, profileID, status, name, contact).Scan(&existingID, &existingStatus); err != nil {
 			return nil, err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -250,12 +251,17 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 		return nil, err
 	}
 
+	// signup_name / signup_contact — то, что человек ВПИСАЛ в форму. Для гостя
+	// без аккаунта это совпадает с профилем-пустышкой, а вот у живого
+	// пользователя Вшаге запись цепляется к его настоящему профилю, который мы
+	// намеренно не переписываем, — и без этих колонок вписанное имя пропадало
+	// бы совсем (см. миграцию 009).
 	var registrationID string
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO event_registrations (event_id, profile_id, status)
-		VALUES ($1, $2, $3)
+		INSERT INTO event_registrations (event_id, profile_id, status, signup_name, signup_contact)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
-	`, eventID, profileID, status).Scan(&registrationID); err != nil {
+	`, eventID, profileID, status, name, contact).Scan(&registrationID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
