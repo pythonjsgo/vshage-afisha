@@ -46,9 +46,10 @@ import (
 // DEV дал два события сразу на первой и второй странице). Одно выражение на
 // оба применения — единственная защита, которую нельзя забыть продублировать.
 const selectCard = `
+		SELECT * FROM (
 		SELECT id, title, annonce,
-		       to_char(date, 'YYYY-MM-DD'),
-		       to_char(date_end, 'YYYY-MM-DD'),
+		       to_char(date, 'YYYY-MM-DD') AS d,
+		       to_char(date_end, 'YYYY-MM-DD') AS de,
 		       CASE WHEN date_end IS NOT NULL AND date < $1::date THEN $1::date
 		            ELSE date END AS eff_date,
 		       CASE WHEN date_end IS NOT NULL AND date < $1::date THEN NULL
@@ -60,7 +61,13 @@ const selectCard = `
 		FROM afisha_tg_events`
 
 // orderCard — порядок ровно по тому же ключу, каким сливает events.MergePage.
-const orderCard = ` ORDER BY eff_date, COALESCE(eff_time, '00:00'), id`
+//
+// Выборка обёрнута в подзапрос НЕ для красоты: Postgres разрешает ссылаться на
+// псевдоним SELECT в ORDER BY только голым именем, а нам нужен
+// COALESCE(eff_time, ...) — внутри выражения он ищет колонку таблицы и падает
+// с `column "eff_time" does not exist`. Повторить CASE в ORDER BY значило бы
+// снова завести второе определение сдвига, которое уже дважды разъезжалось.
+const orderCard = `) t ORDER BY eff_date, COALESCE(eff_time, '00:00'), id`
 
 func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time, limit, offset int) ([]events.PublicEvent, error) {
 	// Клампинг, а не откат: просили больше потолка — отдаём потолок.
@@ -121,7 +128,7 @@ func (r *Repository) AfishaSourceName() string { return "tg" }
 func (r *Repository) GetByID(ctx context.Context, id string) (events.PublicEvent, error) {
 	today := time.Now().In(msk).Format(dateLayout)
 	rows, err := r.pool.Query(ctx, selectCard+`
-		WHERE id = $2 AND NOT hidden`, today, id)
+		WHERE id = $2 AND NOT hidden) t`, today, id)
 	if err != nil {
 		return events.PublicEvent{}, err
 	}
