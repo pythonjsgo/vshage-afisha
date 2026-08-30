@@ -361,12 +361,22 @@ func upsertPublicProfile(ctx context.Context, tx pgx.Tx, deviceID, name, contact
 		return "", err
 	}
 
+	// Вставка идёт под точкой сохранения. Любая ошибка внутри транзакции
+	// гасит её целиком (SQLSTATE 25P02), поэтому без SAVEPOINT ветка
+	// восстановления ниже падала сама — «current transaction is aborted», —
+	// а настоящая причина при этом терялась. Так 30.08 ломалась запись на
+	// событие у каждого, чья почта/телефон/телеграм уже есть в profiles,
+	// то есть ровно у живых пользователей приложения.
+	if _, err := tx.Exec(ctx, `SAVEPOINT sp_public_profile`); err != nil {
+		return "", err
+	}
 	err = tx.QueryRow(ctx, `
 		INSERT INTO profiles (device_id, name, email, phone, telegram_id)
 		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''))
 		RETURNING id
 	`, deviceID, name, email, phone, telegram).Scan(&profileID)
 	if err == nil {
+		_, _ = tx.Exec(ctx, `RELEASE SAVEPOINT sp_public_profile`)
 		return profileID, nil
 	}
 
@@ -375,16 +385,35 @@ func upsertPublicProfile(ctx context.Context, tx pgx.Tx, deviceID, name, contact
 		return "", err
 	}
 
+	if _, err := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT sp_public_profile`); err != nil {
+		return "", err
+	}
+
+	// Конфликт мог прийти НЕ по device_id: на profiles висят уникальные
+	// индексы по email, phone и telegram_id (частичные, WHERE NOT NULL), и
+	// человек с аккаунтом Вшаге наступает именно на них. Ищем по тому же
+	// ключу, по которому конфликт и случился: поиск только по device_id
+	// ничего не находил и запись проваливалась ровно у своих.
+	var foundDevice string
 	err = tx.QueryRow(ctx, `
-		SELECT id
+		SELECT id, device_id
 		FROM profiles
 		WHERE device_id = $1
-		ORDER BY created_at DESC
+		   OR ($2 <> '' AND email = $2)
+		   OR ($3 <> '' AND phone = $3)
+		   OR ($4 <> '' AND telegram_id = $4)
+		ORDER BY (device_id = $1) DESC, created_at DESC
 		LIMIT 1
 		FOR UPDATE
-	`, deviceID).Scan(&profileID)
+	`, deviceID, email, phone, telegram).Scan(&profileID, &foundDevice)
 	if err != nil {
 		return "", err
+	}
+	// Чужой профиль не переписываем: update() ставит name, и без этой
+	// проверки запись на лекцию переименовала бы живого человека в
+	// приложении тем именем, которое вписали в форму на сайте.
+	if foundDevice != deviceID {
+		return profileID, nil
 	}
 	return profileID, update(profileID)
 }
