@@ -1,8 +1,7 @@
-// TODO: parent fills in actual App Store ID at App Store launch (replace `idTODO`)
-const APP_STORE_URL = 'https://apps.apple.com/app/вшаге/idTODO';
-// TODO: replace with real TestFlight invite when public link exists
-const TESTFLIGHT_URL = 'https://testflight.apple.com/join/TODO';
-
+// Живая карточка в App Store (id 6760569940). До 30.08 здесь стояла заглушка
+// `idTODO`: кнопка «Открыть в приложении» уводила всех, у кого приложение не
+// установлено, на несуществующий адрес — то есть работала ровно наоборот.
+const APP_STORE_URL = 'https://apps.apple.com/kz/app/vshage/id6760569940';
 export function eventDeeplink(eventId: string): string {
   return `vshage://event/${encodeURIComponent(eventId)}`;
 }
