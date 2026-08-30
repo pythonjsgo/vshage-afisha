@@ -3,6 +3,9 @@ package tgevents
 import (
 	"context"
 	"encoding/json"
+	"log"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pythonjsgo/vshage-afisha/internal/events"
@@ -61,7 +64,7 @@ const selectCard = `
 		            THEN NULL ELSE time_start END AS eff_time,
 		       city, place_name, address, online,
 		       price_raw, is_free, registration_url, access_level,
-		       segment, org_name, source_url,
+		       segment, org_name, source_url, venue,
 		       (cover IS NOT NULL) AS has_cover
 		FROM afisha_tg_events`
 
@@ -101,11 +104,11 @@ func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time, lim
 
 	out := []events.PublicEvent{}
 	for rows.Next() {
-		c, e, hasCover, err := scanCard(rows)
+		row, err := scanCard(rows)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, toPublic(c, e, hasCover))
+		out = append(out, toPublic(row))
 	}
 	return out, rows.Err()
 }
@@ -145,11 +148,11 @@ func (r *Repository) GetByID(ctx context.Context, id string) (events.PublicEvent
 		}
 		return events.PublicEvent{}, ErrNotFound
 	}
-	c, e, hasCover, err := scanCard(rows)
+	row, err := scanCard(rows)
 	if err != nil {
 		return events.PublicEvent{}, err
 	}
-	return toPublic(c, e, hasCover), rows.Err()
+	return toPublic(row), rows.Err()
 }
 
 type scanner interface {
@@ -164,18 +167,85 @@ type eff struct {
 	Time *string
 }
 
-func scanCard(rows scanner) (Card, eff, bool, error) {
-	var c Card
-	var e eff
+// cardRow — одна строка выборки витрины. Структурой, а не пятью возвратами:
+// колонок у выборки прибавляется, и каждая новая иначе разъезжается по двум
+// сигнатурам плюс двум вызовам.
+type cardRow struct {
+	Card     Card
+	Eff      eff
+	HasCover bool
+	// Venue — сырой кураторский JSONB (008_feed_curation.sql). Разбирается в
+	// parseVenue, а не сканируется в структуру: поле правится руками, и его
+	// может не быть вовсе.
+	Venue []byte
+}
+
+func scanCard(rows scanner) (cardRow, error) {
+	var row cardRow
 	var effDate time.Time
-	var hasCover bool
-	err := rows.Scan(&c.ID, &c.Title, &c.Annonce, &c.Date, &c.DateEnd,
-		&effDate, &e.Time,
-		&c.City, &c.PlaceName, &c.Address, &c.Online,
-		&c.PriceRaw, &c.IsFree, &c.RegistrationURL, &c.AccessLevel,
-		&c.Segment, &c.OrgName, &c.SourceURL, &hasCover)
-	e.Date = effDate.Format(dateLayout)
-	return c, e, hasCover, err
+	err := rows.Scan(&row.Card.ID, &row.Card.Title, &row.Card.Annonce,
+		&row.Card.Date, &row.Card.DateEnd,
+		&effDate, &row.Eff.Time,
+		&row.Card.City, &row.Card.PlaceName, &row.Card.Address, &row.Card.Online,
+		&row.Card.PriceRaw, &row.Card.IsFree, &row.Card.RegistrationURL,
+		&row.Card.AccessLevel, &row.Card.Segment, &row.Card.OrgName,
+		&row.Card.SourceURL, &row.Venue, &row.HasCover)
+	row.Eff.Date = effDate.Format(dateLayout)
+	return row, err
+}
+
+// venueGeo — то, что витрина берёт из кураторского venue: координаты и метро.
+// Остальное содержимое объекта игнорируется сознательно — наружу едет ровно
+// то, что названо в контракте ленты, а не всё, что курация туда положила.
+type venueGeo struct {
+	Lat   *float64
+	Lon   *float64
+	Metro *string
+}
+
+// parseVenue разбирает venue максимально терпимо: поле правится руками, и
+// битый объект не должен уносить карточку целиком — без гео она всё ещё
+// показывается, а с nil-координатами клиент просто не рисует точку.
+func parseVenue(raw []byte) venueGeo {
+	var g venueGeo
+	if len(raw) == 0 {
+		return g
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		log.Printf("tgevents: venue не разбирается: %v", err)
+		return g
+	}
+	g.Lat = venueCoord(m["lat"], 90)
+	g.Lon = venueCoord(m["lon"], 180)
+	if s, ok := m["metro"].(string); ok && s != "" {
+		g.Metro = &s
+	}
+	return g
+}
+
+// venueCoord принимает и число, и строку («55.75» из ручной правки), и
+// проверяет диапазон: перепутанные местами широта с долготой — самая частая
+// опечатка курации, и её лучше не показать вовсе, чем поставить точку в море.
+func venueCoord(v any, limit float64) *float64 {
+	var f float64
+	switch t := v.(type) {
+	case float64:
+		f = t
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(t), 64)
+		if err != nil {
+			return nil
+		}
+		f = parsed
+	default:
+		return nil
+	}
+	if f < -limit || f > limit {
+		log.Printf("tgevents: venue-координата %v вне диапазона ±%v", f, limit)
+		return nil
+	}
+	return &f
 }
 
 // toPublic переводит карточку витрины в контракт ленты.
@@ -189,7 +259,8 @@ func scanCard(rows scanner) (Card, eff, bool, error) {
 // посчитан в SQL (selectCard) и приезжает готовым, потому что тем же
 // выражением сортируется выборка. Считать его в двух местах уже пробовали —
 // разошлись дважды.
-func toPublic(c Card, e eff, hasCover bool) events.PublicEvent {
+func toPublic(row cardRow) events.PublicEvent {
+	c, e, hasCover := row.Card, row.Eff, row.HasCover
 	start := parseMSK(e.Date, e.Time)
 	timeKnown := e.Time != nil && *e.Time != ""
 	source := "tg"
@@ -240,6 +311,11 @@ func toPublic(c Card, e eff, hasCover bool) events.PublicEvent {
 	if c.Online {
 		ev.OnlineURL = c.RegistrationURL
 	}
+	// Гео места из кураторского venue. Отдельными полями, а не объектом:
+	// PublicEvent — общий контракт ленты, и вложенный объект пришлось бы
+	// заводить всем источникам, у которых его нет.
+	g := parseVenue(row.Venue)
+	ev.VenueLat, ev.VenueLon, ev.VenueMetro = g.Lat, g.Lon, g.Metro
 	return ev
 }
 

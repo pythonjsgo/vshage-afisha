@@ -57,6 +57,13 @@ type PublicEvent struct {
 	// признака полночь неотличима от настоящего начала в 00:00, а фронт
 	// печатает её как время события.
 	StartTimeKnown *bool `json:"start_time_known,omitempty"`
+	// VenueLat / VenueLon / VenueMetro — гео места из кураторского venue
+	// (см. internal/tgevents, миграция 008). Опциональны и у большинства
+	// событий отсутствуют: курация проставляет их вручную, и потребитель
+	// обязан переживать их отсутствие, а не считать нулём.
+	VenueLat   *float64 `json:"venue_lat,omitempty"`
+	VenueLon   *float64 `json:"venue_lon,omitempty"`
+	VenueMetro *string  `json:"venue_metro,omitempty"`
 }
 
 type ListQuery struct {

@@ -80,13 +80,7 @@ func (h *Handler) Cover(w http.ResponseWriter, r *http.Request) {
 // партии карточек импортёром (vshage-geo/collect/export_afisha.py, запуск
 // с DEV-хоста — токен не покидает хост).
 func (h *Handler) AdminBulkUpsert(w http.ResponseWriter, r *http.Request) {
-	got := r.Header.Get("X-Admin-Token")
-	if h.adminToken == "" || subtle.ConstantTimeCompare([]byte(got), []byte(h.adminToken)) != 1 {
-		// Строка в логе — иначе оператор, дебажащий 401 импортёра, не увидит
-		// связи с незаданным WEBREG_ADMIN_TOKEN.
-		log.Printf("tgevents: админ-запрос отвергнут (токен %s)",
-			map[bool]string{true: "не настроен", false: "не совпал"}[h.adminToken == ""])
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	if !h.requireAdmin(w, r) {
 		return
 	}
 	var in struct {
@@ -128,6 +122,100 @@ func (h *Handler) AdminBulkUpsert(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("tgevents: импорт применён, карточек: %d", n)
 	writeJSON(w, http.StatusOK, map[string]int{"upserted": n})
+}
+
+// requireAdmin — единственный вход в админ-поверхность tg-событий. Общий на
+// все админ-ручки сознательно: разойдись проверки, одна из ручек однажды
+// осталась бы без неё, и заметить это было бы нечем — 200 выглядит одинаково.
+// Пустой токен = поверхность выключена (fail closed, как у webreg).
+func (h *Handler) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
+	got := r.Header.Get("X-Admin-Token")
+	if h.adminToken == "" || subtle.ConstantTimeCompare([]byte(got), []byte(h.adminToken)) != 1 {
+		// Строка в логе — иначе оператор, дебажащий 401 импортёра, не увидит
+		// связи с незаданным WEBREG_ADMIN_TOKEN.
+		log.Printf("tgevents: админ-запрос отвергнут (токен %s)",
+			map[bool]string{true: "не настроен", false: "не совпал"}[h.adminToken == ""])
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return false
+	}
+	return true
+}
+
+// maxPatchBytes — тело курации это три булевых поля. Всё, что больше, прислано
+// по ошибке, и читать это в память незачем.
+const maxPatchBytes = 4 << 10
+
+// AdminPatch — PATCH /api/tg-events/admin/{id}: курация витрины ленты
+// приложения. Тело — любое подмножество {feed, anchor, hidden}; неназванное
+// поле не трогается. Именно частичная правка, а не подмена строки: снятие с
+// витрины и допуск на полку — разные решения, и одно не должно возвращать
+// другому умолчание.
+func (h *Handler) AdminPatch(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	var in struct {
+		Feed   *bool `json:"feed"`
+		Anchor *bool `json:"anchor"`
+		Hidden *bool `json:"hidden"`
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPatchBytes))
+	// Незнакомое поле — 400, а не молчаливое игнорирование: опечатка в
+	// "anchor" иначе вернула бы 200 с неизменившейся строкой, то есть успех
+	// на невыполненной команде. Курация правит руками — она эту опечатку не
+	// увидит нигде, кроме ответа.
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			writeJSON(w, http.StatusRequestEntityTooLarge,
+				map[string]string{"error": fmt.Sprintf("too_large: тело больше %d КБ", maxPatchBytes>>10)})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest,
+			map[string]string{"error": fmt.Sprintf("invalid_json: %v", err)})
+		return
+	}
+	if in.Feed == nil && in.Anchor == nil && in.Hidden == nil {
+		writeJSON(w, http.StatusBadRequest,
+			map[string]string{"error": "empty_patch: нужно хотя бы одно из feed/anchor/hidden"})
+		return
+	}
+	st, err := h.repo.AdminSetFlags(r.Context(), chi.URLParam(r, "id"),
+		AdminFlags{Feed: in.Feed, Anchor: in.Anchor, Hidden: in.Hidden})
+	if errors.Is(err, ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	if err != nil {
+		log.Printf("tgevents.AdminPatch %s: %v", chi.URLParam(r, "id"), err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
+		return
+	}
+	// Курация — ручное решение о том, что увидят люди: пишем в лог, кто во
+	// что превратился. Иначе «почему это событие в ленте» не восстановить.
+	log.Printf("tgevents: курация %s → feed=%v anchor=%v hidden=%v",
+		st.ID, st.Feed, st.Anchor, st.Hidden)
+	writeJSON(w, http.StatusOK, st)
+}
+
+// AdminList — GET /api/tg-events/admin/list: плоский список для курации.
+// Ни annonce, ни payload наружу не идут: во втором дословный чужой пост, а
+// первый в списке не нужен — решение принимается по заголовку, дате и городу.
+func (h *Handler) AdminList(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	items, err := h.repo.AdminList(r.Context())
+	if err != nil {
+		log.Printf("tgevents.AdminList: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
+		return
+	}
+	// Список меняется руками и читается человеком в момент правки —
+	// кэшировать его нельзя ни на секунду, иначе он покажет доправку.
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, items)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

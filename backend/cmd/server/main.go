@@ -52,6 +52,20 @@ func main() {
 	// runner for local stands where the schema is provisioned out-of-band.
 	if os.Getenv("SKIP_MIGRATIONS") == "1" {
 		log.Print("SKIP_MIGRATIONS=1 set; skipping migration runner")
+		// This binary reads afisha_tg_events.venue unconditionally (selectCard,
+		// migration 008): on a database without 008 every public listing would
+		// answer 500 on every request. A skipped runner is exactly the path
+		// where that drift happens, so fail loud at startup instead.
+		var has008 int
+		if err := pool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM information_schema.columns
+			WHERE table_schema = current_schema()
+			  AND table_name = 'afisha_tg_events' AND column_name = 'venue'
+		`).Scan(&has008); err != nil {
+			log.Fatalf("probe migration 008: %v", err)
+		} else if has008 == 0 {
+			log.Fatal("SKIP_MIGRATIONS=1 but migration 008 (afisha_tg_events.venue/feed/anchor) is not applied — this binary requires it; apply 008 manually or unset SKIP_MIGRATIONS")
+		}
 	} else if err := db.RunMigrations(ctx, pool, db.MigrationService, db.FindMigrationsDir()); err != nil {
 		log.Fatalf("run migrations: %v", err)
 	}
@@ -139,6 +153,12 @@ func main() {
 		r.Get("/tg-events/{id}", tgHandler.Get)
 		r.Get("/tg-events/{id}/cover", tgHandler.Cover)
 		r.Put("/tg-events/admin/bulk", tgHandler.AdminBulkUpsert)
+		// Курация витрины ленты приложения (лента v2). Тот же X-Admin-Token,
+		// что у bulk, и та же схема: авторизация внутри хендлера, а не
+		// мидлварью — статический сегмент "admin" стоит в одном узле с
+		// параметром {id}, и chi матчит его первым.
+		r.Get("/tg-events/admin/list", tgHandler.AdminList)
+		r.Patch("/tg-events/admin/{id}", tgHandler.AdminPatch)
 
 		r.Route("/admin", func(r chi.Router) {
 			r.Use(admin.AuthMiddleware(cfg.AdminJWTSecret))

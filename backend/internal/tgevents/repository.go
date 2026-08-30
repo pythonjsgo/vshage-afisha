@@ -26,8 +26,11 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 }
 
 // UpsertBulk идемпотентно записывает партию карточек: конфликт по id —
-// обновление всех витринных полей. hidden НЕ трогается: снятое с витрины
-// руками не должно возвращаться следующим импортом.
+// обновление всех витринных полей. Кураторские колонки (hidden, а с 008 ещё
+// venue, feed, anchor) НЕ трогаются ни в списке INSERT, ни в DO UPDATE:
+// решение, принятое руками, не должно откатываться следующим импортом.
+// Добавлять их сюда нельзя — новая колонка курации заводится так же, мимо
+// этого запроса.
 //
 // Партия пишется одной транзакцией: наполовину применённый импорт хуже
 // непримёнённого — витрина показала бы смесь старой и новой партии.
@@ -107,6 +110,87 @@ func (r *Repository) UpsertBulk(ctx context.Context, cards []Card) (int, error) 
 		return 0, fmt.Errorf("commit: %w", err)
 	}
 	return n, nil
+}
+
+// AdminFlags — частичная правка курации: nil означает «поле не названо, не
+// трогать». Именно частичная, а не подмена строки: снятие с витрины (hidden)
+// и допуск на полку ленты (feed/anchor) — разные решения, и правка одного не
+// должна возвращать другому умолчание.
+type AdminFlags struct {
+	Feed   *bool
+	Anchor *bool
+	Hidden *bool
+}
+
+// AdminState — состояние строки ПОСЛЕ правки. Отдаём его, а не «ok»: курация
+// идёт руками, и единственный способ увидеть, что применилось именно то,
+// что просили, — прочитать ответ.
+type AdminState struct {
+	ID     string `json:"id"`
+	Feed   bool   `json:"feed"`
+	Anchor bool   `json:"anchor"`
+	Hidden bool   `json:"hidden"`
+}
+
+// AdminSetFlags применяет частичную правку курации. ErrNotFound, если карточки
+// с таким id нет (скрытые правятся тоже — иначе снятое было бы не вернуть).
+func (r *Repository) AdminSetFlags(ctx context.Context, id string, f AdminFlags) (AdminState, error) {
+	var st AdminState
+	// COALESCE с явным ::boolean: неназванное поле приезжает NULL-параметром,
+	// и без каста тип параметра выводить не из чего.
+	err := r.pool.QueryRow(ctx, `
+		UPDATE afisha_tg_events SET
+			feed       = COALESCE($2::boolean, feed),
+			anchor     = COALESCE($3::boolean, anchor),
+			hidden     = COALESCE($4::boolean, hidden),
+			updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, feed, anchor, hidden`,
+		id, f.Feed, f.Anchor, f.Hidden).Scan(&st.ID, &st.Feed, &st.Anchor, &st.Hidden)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AdminState{}, ErrNotFound
+	}
+	return st, err
+}
+
+// AdminListItem — строка списка курации. Ни annonce, ни payload: во втором
+// дословный чужой пост, а первый в списке не нужен — решение принимается по
+// заголовку, дате и городу.
+type AdminListItem struct {
+	ID     string  `json:"id"`
+	Title  string  `json:"title"`
+	Date   string  `json:"date"`
+	City   *string `json:"city"`
+	Feed   bool    `json:"feed"`
+	Anchor bool    `json:"anchor"`
+	Hidden bool    `json:"hidden"`
+}
+
+// AdminList — весь стор для курации, включая скрытое и прошедшее: список
+// существует, чтобы решать судьбу карточек, и спрятанное от него было бы
+// не вернуть на витрину.
+func (r *Repository) AdminList(ctx context.Context) ([]AdminListItem, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, title, to_char(date, 'YYYY-MM-DD'), city, feed, anchor, hidden
+		FROM afisha_tg_events
+		ORDER BY date, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Непустой слайс: пустая витрина должна приехать как [], а не null —
+	// иначе курации приходится различать «пусто» и «поле не пришло».
+	out := []AdminListItem{}
+	for rows.Next() {
+		var it AdminListItem
+		if err := rows.Scan(&it.ID, &it.Title, &it.Date, &it.City,
+			&it.Feed, &it.Anchor, &it.Hidden); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
 }
 
 // Cover — байты обложки для отдачи браузеру. ErrNoCover, если события нет,
