@@ -38,6 +38,30 @@ import (
 // и сравнивать сутки правильнее календарно. Зона фиксированная, не
 // LoadLocation, — образ без tzdata молча уехал бы в UTC и до 03:00 МСК прятал
 // бы сегодняшние события.
+// selectCard — общий список колонок. Эффективные дата и время (eff_date,
+// eff_time) считаются ЗДЕСЬ и только здесь: идущая многодневная программа
+// сортируется и показывается как сегодняшняя, а не как начавшаяся полгода
+// назад. Раньше этот сдвиг жил в маппере, а порядок — в ORDER BY, и они
+// дважды разошлись: сначала на бестаймовых, потом на самом сдвиге (замер на
+// DEV дал два события сразу на первой и второй странице). Одно выражение на
+// оба применения — единственная защита, которую нельзя забыть продублировать.
+const selectCard = `
+		SELECT id, title, annonce,
+		       to_char(date, 'YYYY-MM-DD'),
+		       to_char(date_end, 'YYYY-MM-DD'),
+		       CASE WHEN date_end IS NOT NULL AND date < $1::date THEN $1::date
+		            ELSE date END AS eff_date,
+		       CASE WHEN date_end IS NOT NULL AND date < $1::date THEN NULL
+		            ELSE time_start END AS eff_time,
+		       city, place_name, address, online,
+		       price_raw, is_free, registration_url, access_level,
+		       segment, org_name, source_url,
+		       (cover IS NOT NULL) AS has_cover
+		FROM afisha_tg_events`
+
+// orderCard — порядок ровно по тому же ключу, каким сливает events.MergePage.
+const orderCard = ` ORDER BY eff_date, COALESCE(eff_time, '00:00'), id`
+
 func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time, limit, offset int) ([]events.PublicEvent, error) {
 	// Клампинг, а не откат: просили больше потолка — отдаём потолок.
 	// Откат к 30 означал бы «страница набрана», когда она не набрана.
@@ -55,25 +79,9 @@ func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time, lim
 	// контейнере — UTC, и с полуночи до трёх ночи это другой день.
 	today := time.Now().In(msk).Format(dateLayout)
 
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, title, annonce,
-		       to_char(date, 'YYYY-MM-DD'),
-		       to_char(date_end, 'YYYY-MM-DD'),
-		       time_start, city, place_name, address, online,
-		       price_raw, is_free, registration_url, access_level,
-		       segment, org_name, source_url,
-		       (cover IS NOT NULL) AS has_cover
-		FROM afisha_tg_events
-		WHERE NOT hidden
-		  AND COALESCE(date_end, date) >= $1
-		-- Порядок ОБЯЗАН совпадать с ключом слияния (events.MergePage:
-		-- StartTime, затем id), иначе инвариант «источник отдал свои первые
-		-- offset+limit по ключу слияния» ломается на границе окна и событие
-		-- может не попасть НИ НА ОДНУ страницу. Раньше здесь стояло
-		-- time_start NULLS LAST: в SQL бестаймовые уходили в конец дня, а в
-		-- слиянии (00:00) вставали в начало — ровно противоположные порядки.
-		ORDER BY GREATEST(date, $4::date), COALESCE(time_start, '00:00'), id
-		LIMIT $2 OFFSET $3`, day, limit, offset, today)
+	rows, err := r.pool.Query(ctx, selectCard+`
+		WHERE NOT hidden AND COALESCE(date_end, date) >= $2`+orderCard+`
+		LIMIT $3 OFFSET $4`, today, day, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -81,11 +89,11 @@ func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time, lim
 
 	out := []events.PublicEvent{}
 	for rows.Next() {
-		c, hasCover, err := scanCard(rows)
+		c, e, hasCover, err := scanCard(rows)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, toPublic(c, hasCover))
+		out = append(out, toPublic(c, e, hasCover))
 	}
 	return out, rows.Err()
 }
@@ -107,17 +115,13 @@ func (r *Repository) AfishaSourceName() string { return "tg" }
 // GetByID — одиночная карточка для страницы события. Без неё каждая карточка
 // в ленте вела бы в 404: id вида ev_* уходил бы во фронте в /api/e/<slug> как
 // слаг веб-регистрации (это и было третьим препятствием 23.08).
+// GetByID — одиночная карточка для страницы события. Без неё каждая карточка
+// в ленте вела бы в 404: id вида ev_* уходил бы во фронте в /api/e/<slug> как
+// слаг веб-регистрации (это и было третьим препятствием 23.08).
 func (r *Repository) GetByID(ctx context.Context, id string) (events.PublicEvent, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, title, annonce,
-		       to_char(date, 'YYYY-MM-DD'),
-		       to_char(date_end, 'YYYY-MM-DD'),
-		       time_start, city, place_name, address, online,
-		       price_raw, is_free, registration_url, access_level,
-		       segment, org_name, source_url,
-		       (cover IS NOT NULL) AS has_cover
-		FROM afisha_tg_events
-		WHERE id = $1 AND NOT hidden`, id)
+	today := time.Now().In(msk).Format(dateLayout)
+	rows, err := r.pool.Query(ctx, selectCard+`
+		WHERE id = $2 AND NOT hidden`, today, id)
 	if err != nil {
 		return events.PublicEvent{}, err
 	}
@@ -129,52 +133,54 @@ func (r *Repository) GetByID(ctx context.Context, id string) (events.PublicEvent
 		}
 		return events.PublicEvent{}, ErrNotFound
 	}
-	c, hasCover, err := scanCard(rows)
+	c, e, hasCover, err := scanCard(rows)
 	if err != nil {
 		return events.PublicEvent{}, err
 	}
-	return toPublic(c, hasCover), rows.Err()
+	return toPublic(c, e, hasCover), rows.Err()
 }
 
 type scanner interface {
 	Scan(dest ...any) error
 }
 
-func scanCard(rows scanner) (Card, bool, error) {
+// eff — эффективные дата и время карточки, посчитанные в SQL (см. selectCard).
+// eff.Time == nil означает «времени нет»: либо его не было в анонсе, либо
+// программа идёт с прошлой даты и сдвинута на сегодня.
+type eff struct {
+	Date string
+	Time *string
+}
+
+func scanCard(rows scanner) (Card, eff, bool, error) {
 	var c Card
+	var e eff
+	var effDate time.Time
 	var hasCover bool
 	err := rows.Scan(&c.ID, &c.Title, &c.Annonce, &c.Date, &c.DateEnd,
-		&c.TimeStart, &c.City, &c.PlaceName, &c.Address, &c.Online,
+		&effDate, &e.Time,
+		&c.City, &c.PlaceName, &c.Address, &c.Online,
 		&c.PriceRaw, &c.IsFree, &c.RegistrationURL, &c.AccessLevel,
 		&c.Segment, &c.OrgName, &c.SourceURL, &hasCover)
-	return c, hasCover, err
+	e.Date = effDate.Format(dateLayout)
+	return c, e, hasCover, err
 }
 
 // toPublic переводит карточку витрины в контракт ленты.
 //
-// Время. У карточки дата и, если повезло, «HH:MM». Отсутствие времени
-// кодируется как 00:00 МСК, и это решение записано здесь, а не подразумевается:
-// иначе через месяц кто-нибудь прочитает полночь как «событие ночью». Дата
-// собирается СРАЗУ в МСК — наивный разбор через UTC сдвинул бы все карточки
-// без времени на день назад.
-func toPublic(c Card, hasCover bool) events.PublicEvent {
-	start := parseMSK(c.Date, c.TimeStart)
-	timeKnown := c.TimeStart != nil && *c.TimeStart != ""
+// Время. Отсутствие времени кодируется полуночью МСК, и это решение записано
+// здесь, а не подразумевается: иначе через месяц кто-нибудь прочитает полночь
+// как «событие ночью». Дата собирается СРАЗУ в МСК — наивный разбор через UTC
+// сдвинул бы все карточки без времени на день назад.
+//
+// Сдвиг идущих многодневных программ на сегодня здесь НЕ делается: он
+// посчитан в SQL (selectCard) и приезжает готовым, потому что тем же
+// выражением сортируется выборка. Считать его в двух местах уже пробовали —
+// разошлись дважды.
+func toPublic(c Card, e eff, hasCover bool) events.PublicEvent {
+	start := parseMSK(e.Date, e.Time)
+	timeKnown := e.Time != nil && *e.Time != ""
 	source := "tg"
-
-	// Идущая многодневная программа сортируется как СЕГОДНЯШНЯЯ, а не как
-	// начавшаяся полгода назад. Иначе выставка «с 6 марта по 13 сентября»
-	// встаёт в голову ленты и стоит там месяцами: лента сортируется по
-	// времени начала, и самый ранний старт всегда выигрывает. Замер на DEV:
-	// 4 карточки из 20 датированы прошлым, они заняли бы первые четыре
-	// позиции всей афиши. Настоящие даты программы никуда не деваются — их
-	// показывает диапазон «до 13 сентября» из EndTime.
-	today := time.Now().In(msk)
-	todayMidnight := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, msk)
-	if c.DateEnd != nil && *c.DateEnd != "" && start.Before(todayMidnight) {
-		start = todayMidnight
-		timeKnown = false
-	}
 
 	ev := events.PublicEvent{
 		ID:               c.ID,
@@ -215,8 +221,6 @@ func toPublic(c Card, hasCover bool) events.PublicEvent {
 		ev.PriceType = strPtr("free")
 	}
 	// Регистрация всегда ВНЕШНЯЯ: мы не ведём списки на чужие события.
-	// registration_mode="external" — это то, по чему фронт понимает, что
-	// кнопки «Зарегистрироваться» здесь быть не должно.
 	ev.RegistrationMode = strPtr("external")
 	if c.RegistrationURL != nil && *c.RegistrationURL != "" {
 		ev.ExternalRegURL = c.RegistrationURL
