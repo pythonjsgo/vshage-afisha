@@ -1,23 +1,58 @@
 import { describe, it, expect } from 'vitest';
-import { formatEventDate, formatEventDateLong } from '../../src/lib/dateFormat';
+import { formatEventDate, formatEventDateLong, formatEndDate } from '../../src/lib/dateFormat';
+
+/**
+ * Даты в фикстурах — с ЯВНЫМ смещением. Прежние строки вида
+ * '2026-04-25T19:00:00' парсятся как ЛОКАЛЬНОЕ время рантайма, а старый
+ * форматтер печатал тоже в локальном — две ошибки сокращались, и тест
+ * проходил в любой зоне, ничего при этом не проверяя. Именно поэтому он не
+ * поймал, что SSR-контейнер (UTC) рисует всю афишу в UTC.
+ *
+ * Теперь утверждение честное: событие в 19:00 по Москве обязано печататься
+ * как 19:00 независимо от того, где выполняется код.
+ */
+const now = new Date('2026-04-25T10:00:00+03:00');
 
 describe('formatEventDate', () => {
-  it('handles today', () => {
-    const now = new Date('2026-04-25T10:00:00');
-    expect(formatEventDate('2026-04-25T19:00:00', now)).toBe('СЕГОДНЯ В 19:00');
+  it('сегодня', () => {
+    expect(formatEventDate('2026-04-25T19:00:00+03:00', now)).toBe('СЕГОДНЯ В 19:00');
   });
-  it('handles tomorrow', () => {
-    const now = new Date('2026-04-25T10:00:00');
-    expect(formatEventDate('2026-04-26T19:00:00', now)).toBe('ЗАВТРА В 19:00');
+  it('завтра', () => {
+    expect(formatEventDate('2026-04-26T19:00:00+03:00', now)).toBe('ЗАВТРА В 19:00');
   });
-  it('handles far future', () => {
-    const now = new Date('2026-04-25T10:00:00');
-    expect(formatEventDate('2026-05-15T19:00:00', now)).toBe('15 МАЯ · 19:00');
+  it('дальше по календарю', () => {
+    expect(formatEventDate('2026-05-15T19:00:00+03:00', now)).toBe('15 МАЯ · 19:00');
+  });
+
+  // Ровно тот случай, ради которого зона задана явно: полночь по Москве в
+  // рантайме UTC — это 21:00 ПРЕДЫДУЩЕГО дня. Старый форматтер печатал
+  // «31 АВГ · 21:00» в разметке, которую видят краулер и превью в телеге,
+  // а после гидрации в московском браузере текст менялся на «1 СЕН».
+  it('полночь по Москве не уезжает на день назад', () => {
+    const out = formatEventDate('2026-09-01T00:00:00+03:00', now, false);
+    expect(out).toBe('1 СЕН');
+    expect(out).not.toContain('31');
+  });
+
+  // «Времени нет» — частый случай у импортированных анонсов (7 карточек из
+  // 20 на замере 30.08). Печатать там 00:00 значило бы выдумывать время.
+  it('без времени печатает только дату', () => {
+    expect(formatEventDate('2026-05-15T00:00:00+03:00', now, false)).toBe('15 МАЯ');
+    expect(formatEventDate('2026-04-26T00:00:00+03:00', now, false)).toBe('ЗАВТРА');
   });
 });
 
 describe('formatEventDateLong', () => {
-  it('formats with month', () => {
-    expect(formatEventDateLong('2026-04-25T19:30:00')).toBe('25 АПР · 19:30');
+  it('с месяцем', () => {
+    expect(formatEventDateLong('2026-04-25T19:30:00+03:00')).toBe('25 АПР · 19:30');
+  });
+  it('без времени', () => {
+    expect(formatEventDateLong('2026-04-25T00:00:00+03:00', false)).toBe('25 АПР');
+  });
+});
+
+describe('formatEndDate', () => {
+  it('конец многодневной программы', () => {
+    expect(formatEndDate('2026-09-13T23:59:00+03:00')).toBe('до 13 СЕН');
   });
 });
