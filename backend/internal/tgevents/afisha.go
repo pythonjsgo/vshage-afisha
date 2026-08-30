@@ -50,10 +50,15 @@ const selectCard = `
 		SELECT id, title, annonce,
 		       to_char(date, 'YYYY-MM-DD') AS d,
 		       to_char(date_end, 'YYYY-MM-DD') AS de,
-		       CASE WHEN date_end IS NOT NULL AND date < $1::date THEN $1::date
-		            ELSE date END AS eff_date,
-		       CASE WHEN date_end IS NOT NULL AND date < $1::date THEN NULL
-		            ELSE time_start END AS eff_time,
+		       -- Сдвигаем на сегодня только программу, которая ЕЩЁ ИДЁТ.
+		       -- Условие `date_end >= сегодня` обязательно: лента держит
+		       -- вчерашнее ещё сутки (окно -24ч), и без него уже кончившаяся
+		       -- программа получала сегодняшний старт — карточка говорила
+		       -- «СЕГОДНЯ · до 29 АВГ», то есть сама себе противоречила.
+		       CASE WHEN date_end IS NOT NULL AND date < $1::date AND date_end >= $1::date
+		            THEN $1::date ELSE date END AS eff_date,
+		       CASE WHEN date_end IS NOT NULL AND date < $1::date AND date_end >= $1::date
+		            THEN NULL ELSE time_start END AS eff_time,
 		       city, place_name, address, online,
 		       price_raw, is_free, registration_url, access_level,
 		       segment, org_name, source_url,
