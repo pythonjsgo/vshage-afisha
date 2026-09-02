@@ -47,6 +47,21 @@ const selectCols = `
 	COALESCE(d.reg_form, '{}'::jsonb), COALESCE(d.reg_fields, '[]'::jsonb)
 `
 
+// visibility различает три состояния, и разница между вторым и третьим — это
+// ровно то, что просил фаундер 03.09:
+//
+//	public   — в общей ленте афиши и по ссылке
+//	unlisted — ТОЛЬКО по ссылке: карточка открывается, запись работает,
+//	           но на доску событие не попадает и в счётчик total не входит
+//	private  — недоступно вовсе
+//
+// Условия названы, потому что встречаются в пяти запросах: правку легко внести
+// в один из них и не заметить, а разъедутся при этом доска и живая ссылка.
+const (
+	visibleOnBoard = `COALESCE(d.visibility, 'public') = 'public'`
+	visibleByLink  = `COALESCE(d.visibility, 'public') IN ('public', 'unlisted')`
+)
+
 // Joins referenced by selectCols. Used by every SELECT in this file.
 //
 // providers — это КАБИНЕТ организатора, и его display_name — то имя, под
@@ -71,7 +86,7 @@ func (r *Repository) List(ctx context.Context, q ListQuery) (ListResult, error) 
 		INNER JOIN afisha_featured f ON f.event_id = e.id
 		WHERE e.status = 'published'
 		  AND e.start_time >= $1
-		  AND COALESCE(d.visibility, 'public') = 'public'
+		  AND `+visibleOnBoard+`
 		ORDER BY f.position ASC, e.start_time ASC
 		LIMIT 10
 	`, since)
@@ -94,7 +109,7 @@ func (r *Repository) List(ctx context.Context, q ListQuery) (ListResult, error) 
 		LEFT JOIN afisha_featured f ON f.event_id = e.id
 		WHERE e.status = 'published'
 		  AND e.start_time >= $1
-		  AND COALESCE(d.visibility, 'public') = 'public'
+		  AND `+visibleOnBoard+`
 		ORDER BY e.start_time ASC
 		LIMIT $2 OFFSET $3
 	`, since, limit, q.Offset)
@@ -109,7 +124,7 @@ func (r *Repository) List(ctx context.Context, q ListQuery) (ListResult, error) 
 		LEFT JOIN organizer_event_details d ON d.event_id = e.id
 		WHERE e.status = 'published'
 		  AND e.start_time >= $1
-		  AND COALESCE(d.visibility, 'public') = 'public'
+		  AND `+visibleOnBoard+`
 	`, since).Scan(&total); err != nil {
 		return ListResult{}, err
 	}
@@ -123,7 +138,7 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*PublicEvent, erro
 		LEFT JOIN afisha_featured f ON f.event_id = e.id
 		WHERE e.id = $1
 		  AND e.status = 'published'
-		  AND COALESCE(d.visibility, 'public') = 'public'
+		  AND `+visibleByLink+`
 	`, id)
 	if err != nil {
 		return nil, err
@@ -195,7 +210,7 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 	if ev.Status != "published" {
 		return nil, &RegistrationError{Status: http.StatusConflict, Code: "registration_unavailable", Message: "Регистрация на это событие недоступна"}
 	}
-	if ev.Visibility != "public" {
+	if ev.Visibility != "public" && ev.Visibility != "unlisted" {
 		return nil, &RegistrationError{Status: http.StatusNotFound, Code: "event_not_found", Message: "Событие не найдено"}
 	}
 	if ev.RegMode == "external" {
