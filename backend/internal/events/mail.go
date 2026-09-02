@@ -66,7 +66,7 @@ const mailEventCols = `
 	e.id, e.title, COALESCE(e.description,''), e.start_time, e.end_time,
 	COALESCE(d.venue_name,''), COALESCE(d.address,''), COALESCE(d.city,''),
 	COALESCE(e.location,''), COALESCE(d.online_url,''), COALESCE(e.photo_url,''),
-	COALESCE(p.name,''), COALESCE(e.organizer_id::text,''),
+	COALESCE(NULLIF(pr.display_name,''), p.name, ''), COALESCE(e.organizer_id::text,''),
 	COALESCE(d.price_type,'free'), d.price_min, d.price_max, COALESCE(d.currency,'RUB')
 `
 
@@ -268,6 +268,7 @@ func afterSignup(ctx context.Context, tx pgx.Tx, eventID string, form regform.Fo
 		FROM events e
 		LEFT JOIN organizer_event_details d ON d.event_id = e.id
 		LEFT JOIN profiles p ON p.id = e.organizer_id
+		LEFT JOIN providers pr ON pr.profile_id = e.organizer_id
 		WHERE e.id = $1`, eventID))
 	if err != nil {
 		return err
@@ -349,6 +350,7 @@ func sweepReminders(ctx context.Context, pool *pgxpool.Pool) (int, error) {
 		JOIN events e ON e.id = r.event_id
 		LEFT JOIN organizer_event_details d ON d.event_id = e.id
 		LEFT JOIN profiles p ON p.id = e.organizer_id
+		LEFT JOIN providers pr ON pr.profile_id = e.organizer_id
 		WHERE r.reminder_mail_at IS NULL
 		  AND r.status = 'registered'
 		  AND r.signup_email IS NOT NULL AND r.signup_email <> ''

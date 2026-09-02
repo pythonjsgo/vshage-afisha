@@ -38,7 +38,7 @@ const selectCols = `
 	d.city, d.venue_name, d.address, d.online_url, d.age_limit, d.attendees_note,
 	f.position IS NOT NULL,
 	f.position,
-	p.name, p.photo_url,
+	COALESCE(NULLIF(pr.display_name, ''), p.name), COALESCE(pr.avatar_url, p.photo_url),
 	COALESCE(ARRAY(
 		SELECT url FROM afisha_event_photos
 		WHERE event_id = e.id
@@ -48,9 +48,15 @@ const selectCols = `
 `
 
 // Joins referenced by selectCols. Used by every SELECT in this file.
+//
+// providers — это КАБИНЕТ организатора, и его display_name — то имя, под
+// которым он выступает публично («ШАГ»), тогда как profiles.name — имя
+// аккаунта человека, который кабинетом управляет («Julia»). Показывать надо
+// первое: посетитель идёт на событие сообщества, а не в гости к сотруднику.
 const selectFrom = `
 	FROM events e
 	LEFT JOIN profiles p ON p.id = e.organizer_id
+	LEFT JOIN providers pr ON pr.profile_id = e.organizer_id
 	LEFT JOIN organizer_event_details d ON d.event_id = e.id
 `
 
