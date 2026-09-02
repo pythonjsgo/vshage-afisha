@@ -104,9 +104,10 @@ func TestConfirmationCarriesEverythingNeededToShowUp(t *testing.T) {
 		}
 	}
 	// Обращение по имени, а не по фамилии: «Иванов, место за тобой» читается
-	// как повестка.
-	if !strings.Contains(html, "Иван, ") {
-		t.Error("нет обращения по имени")
+	// как повестка. И строчная после запятой — «Иван, Место за тобой» выдаёт
+	// машинную склейку, это уже вылезло на DEV.
+	if !strings.Contains(html, "Иван, место за тобой") {
+		t.Errorf("обращение собрано неправильно: %q", opening(html))
 	}
 }
 
@@ -183,6 +184,15 @@ func TestMIMEHasBothBodiesAndTheAttachment(t *testing.T) {
 	if strings.Count(out, "\r\n\r\n--") < 1 {
 		t.Error("границы частей расставлены неправильно")
 	}
+}
+
+func opening(html string) string {
+	i := strings.Index(html, "Иван")
+	if i < 0 {
+		return "(нет имени в письме)"
+	}
+	j := strings.Index(html[i:], "<")
+	return html[i : i+j]
 }
 
 func tail(s string) string {

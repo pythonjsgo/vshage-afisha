@@ -2,7 +2,7 @@
 {{.Kicker}}
 
 {{.Headline}}
-{{if .GuestName}}{{.GuestName}}, {{end}}{{.Lead}}
+{{.Opening}}
 
 {{.Title}}
 --------------------------------------------------

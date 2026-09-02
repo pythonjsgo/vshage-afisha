@@ -162,6 +162,7 @@ func (n *notifier) drain(ctx context.Context) {
 		SELECT id, COALESCE(channel,'tg'), COALESCE(recipient,''), payload
 		FROM registration_notify_outbox
 		WHERE sent_at IS NULL
+		  AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
 		ORDER BY id
 		LIMIT 20
 		FOR UPDATE SKIP LOCKED`)
@@ -198,16 +199,21 @@ func (n *notifier) drain(ctx context.Context) {
 		err := n.deliver(ctx, it.channel, it.recipient, it.payload)
 		if err != nil {
 			log.Printf("notify: отправка id=%d канал=%s: %v", it.id, it.channel, err)
+			// Пауза растёт с попытками и упирается в пять минут: канал,
+			// который лежит час, не должен ни собирать восемь тысяч
+			// обращений, ни потерять строку.
 			_, _ = n.pool.Exec(ctx, `
 				UPDATE registration_notify_outbox
-				SET attempts = attempts + 1, last_error = $2
+				SET attempts = attempts + 1, last_error = $2,
+				    next_attempt_at = NOW() + LEAST(attempts + 1, 30) * interval '10 seconds'
 				WHERE id = $1`, it.id, err.Error())
 			stalled[it.channel] = true
 			continue
 		}
 		if _, err := n.pool.Exec(ctx, `
 			UPDATE registration_notify_outbox
-			SET sent_at = NOW(), attempts = attempts + 1, last_error = NULL
+			SET sent_at = NOW(), attempts = attempts + 1, last_error = NULL,
+			    next_attempt_at = NULL
 			WHERE id = $1`, it.id); err != nil {
 			log.Printf("notify: пометка id=%d: %v", it.id, err)
 			return

@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"strings"
 	"time"
+	"unicode"
 )
 
 //go:embed templates/letter.html
@@ -74,6 +75,7 @@ type letterData struct {
 	PassNote     string
 	Answers      []KV
 	GuestName    string
+	Opening      string
 	RegShort     string
 	CalendarHint string
 }
@@ -110,6 +112,13 @@ func Render(s Signup) (subject, html, text string) {
 		d.Lead = "Место за тобой. Ниже — всё, что нужно знать до входа."
 		d.CalendarHint = "К письму приложена карточка события — открой вложение, и оно встанет в календарь с напоминанием."
 		subject = fmt.Sprintf("Ты записан(а): %s — %s", s.Event.Title, ShortDate(start))
+	}
+
+	d.Opening = d.Lead
+	if d.GuestName != "" {
+		// «Иван, Место за тобой» — заглавная после запятой читается как
+		// машинная склейка, потому что она ею и является.
+		d.Opening = d.GuestName + ", " + lowerFirst(d.Lead)
 	}
 
 	var hb, tb bytes.Buffer
@@ -178,6 +187,18 @@ func plural(n int, one, few, many string) string {
 		form = few
 	}
 	return fmt.Sprintf("%d %s", n, form)
+}
+
+// lowerFirst опускает ТОЛЬКО первую букву и только если она заглавная:
+// строка может начинаться с имени собственного, и «мЕсто» тут получить легче,
+// чем кажется.
+func lowerFirst(s string) string {
+	r := []rune(s)
+	if len(r) == 0 {
+		return s
+	}
+	r[0] = unicode.ToLower(r[0])
+	return string(r)
 }
 
 func firstName(full string) string {

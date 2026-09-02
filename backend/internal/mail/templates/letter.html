@@ -49,7 +49,7 @@
   <tr><td class="pad" style="padding:34px 36px 0 36px;">
     <div style="font-family:'SF Mono','JetBrains Mono',Consolas,'Courier New',monospace;font-size:11px;letter-spacing:4px;color:#00ff88;text-transform:uppercase;padding-bottom:14px;">{{.Kicker}}</div>
     <div class="h1" style="font-family:Impact,Haettenschweiler,'Arial Narrow Bold',sans-serif;font-size:52px;line-height:52px;letter-spacing:-0.5px;color:#fafafa;text-transform:uppercase;">{{.Headline}}</div>
-    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:25px;color:#b6b6bd;padding-top:14px;">{{if .GuestName}}{{.GuestName}}, {{end}}{{.Lead}}</div>
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:25px;color:#b6b6bd;padding-top:14px;">{{.Opening}}</div>
   </td></tr>
 
   <tr><td class="pad" style="padding:26px 36px 0 36px;">
@@ -126,7 +126,10 @@
   {{end}}
 
   <tr><td class="pad" style="padding:20px 36px 0 36px;">
-    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#888;">📅 {{.CalendarHint}}</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td width="86" valign="top" style="font-family:'SF Mono','JetBrains Mono',Consolas,'Courier New',monospace;font-size:10px;letter-spacing:2px;color:#666;text-transform:uppercase;padding-top:3px;">Календарь</td>
+      <td valign="top" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#888;">{{.CalendarHint}}</td>
+    </tr></table>
   </td></tr>
 
   {{if .Answers}}
