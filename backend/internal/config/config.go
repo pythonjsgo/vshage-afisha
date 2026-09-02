@@ -37,6 +37,9 @@ type Config struct {
 	// WebregLogPath optionally mirrors submissions to a file; stdout always
 	// gets them regardless.
 	WebregLogPath string
+	// PublicBaseURL — адрес публичных страниц афиши. Нужен письмам: ссылка
+	// в письме открывается почтовиком, и относительный путь он не разрешит.
+	PublicBaseURL string
 	// WebregIPSalt salts stored IP hashes. Empty ⇒ a random per-process salt
 	// (hashes then stop being comparable across restarts, which is fine —
 	// they only serve abuse triage, never identification).
@@ -58,6 +61,7 @@ func Load() (*Config, error) {
 		TGInFeed:         os.Getenv("AFISHA_TG_IN_FEED") == "1",
 		WebregLogPath:    os.Getenv("WEBREG_LOG_PATH"),
 		WebregIPSalt:     os.Getenv("WEBREG_IP_SALT"),
+		PublicBaseURL:    envDefault("PUBLIC_BASE_URL", "https://afisha.vshage.app"),
 	}
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL required")

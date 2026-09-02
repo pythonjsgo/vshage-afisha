@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="supported-color-schemes" content="dark">
+<title>{{.Title}}</title>
+<!--[if mso]><style>body,table,td{font-family:Arial,sans-serif !important}</style><![endif]-->
+<style>
+  /* Верстка письма — таблицами и инлайновыми стилями; этот блок только для
+     тех клиентов, что читают <style>, и не может быть единственным носителем
+     смысла: Gmail-веб его понимает, Outlook-desktop частично, Яндекс режет. */
+  a { text-decoration: none; }
+  @media (max-width: 620px) {
+    .wrap { width: 100% !important; }
+    .pad { padding-left: 22px !important; padding-right: 22px !important; }
+    .h1 { font-size: 40px !important; line-height: 42px !important; }
+    .btn { display: block !important; width: 100% !important; }
+    .btn-td { display: block !important; width: 100% !important; padding-bottom: 10px !important; }
+  }
+</style>
+</head>
+<body style="margin:0;padding:0;background:#050506;color:#fafafa;-webkit-font-smoothing:antialiased;">
+
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:#050506;font-size:1px;line-height:1px;">{{.WhenLong}}, {{.WhenTime}}{{if .Location}} · {{.Location}}{{end}}&#8203;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;</div>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#050506" style="background:#050506;">
+<tr><td align="center" style="padding:28px 12px 40px 12px;">
+
+<table role="presentation" class="wrap" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#0a0a0a;border:1px solid #2a2a30;">
+
+  <!-- фирменная полоса -->
+  <tr><td style="height:4px;line-height:4px;font-size:0;background:#00ff88;">&nbsp;</td></tr>
+
+  <tr><td class="pad" style="padding:20px 36px 18px 36px;border-bottom:1px solid #2a2a30;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td align="left" style="font-family:'SF Mono','JetBrains Mono',Consolas,'Courier New',monospace;font-size:11px;letter-spacing:3px;color:#ff00cc;text-transform:uppercase;">Вшаге&nbsp;·&nbsp;Афиша</td>
+      <td align="right" style="font-family:'SF Mono','JetBrains Mono',Consolas,'Courier New',monospace;font-size:11px;letter-spacing:2px;color:#666;">{{.RegShort}}</td>
+    </tr></table>
+  </td></tr>
+
+  {{if .CoverURL}}
+  <tr><td style="font-size:0;line-height:0;">
+    <img src="{{.CoverURL}}" width="600" alt="" style="display:block;width:100%;max-width:600px;height:auto;border:0;">
+  </td></tr>
+  {{end}}
+
+  <tr><td class="pad" style="padding:34px 36px 0 36px;">
+    <div style="font-family:'SF Mono','JetBrains Mono',Consolas,'Courier New',monospace;font-size:11px;letter-spacing:4px;color:#00ff88;text-transform:uppercase;padding-bottom:14px;">{{.Kicker}}</div>
+    <div class="h1" style="font-family:Impact,Haettenschweiler,'Arial Narrow Bold',sans-serif;font-size:52px;line-height:52px;letter-spacing:-0.5px;color:#fafafa;text-transform:uppercase;">{{.Headline}}</div>
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:25px;color:#b6b6bd;padding-top:14px;">{{if .GuestName}}{{.GuestName}}, {{end}}{{.Lead}}</div>
+  </td></tr>
+
+  <tr><td class="pad" style="padding:26px 36px 0 36px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#15151a" style="background:#15151a;border:1px solid #2a2a30;">
+      <tr><td style="padding:22px 22px 18px 22px;">
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:21px;line-height:28px;font-weight:700;color:#fafafa;">{{.Title}}</div>
+      </td></tr>
+
+      <tr><td style="padding:0 22px;"><div style="height:1px;line-height:1px;font-size:0;background:#2a2a30;">&nbsp;</div></td></tr>
+
+      <tr><td style="padding:16px 22px 4px 22px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td width="86" valign="top" style="font-family:'SF Mono','JetBrains Mono',Consolas,'Courier New',monospace;font-size:10px;letter-spacing:2px;color:#00ff88;text-transform:uppercase;padding:0 0 14px 0;">Когда</td>
+            <td valign="top" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:22px;color:#fafafa;padding:0 0 14px 0;">
+              {{.WhenLong}}<br><strong style="font-size:19px;">{{.WhenTime}}</strong>
+            </td>
+          </tr>
+          {{if .Location}}
+          <tr>
+            <td width="86" valign="top" style="font-family:'SF Mono','JetBrains Mono',Consolas,'Courier New',monospace;font-size:10px;letter-spacing:2px;color:#00ff88;text-transform:uppercase;padding:0 0 14px 0;">Где</td>
+            <td valign="top" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:22px;color:#fafafa;padding:0 0 14px 0;">
+              {{.Location}}{{if .MapURL}}<br><a href="{{.MapURL}}" style="color:#ff00cc;font-size:14px;border-bottom:1px solid #ff00cc;">Открыть на карте</a>{{end}}
+            </td>
+          </tr>
+          {{end}}
+          {{if .OnlineURL}}
+          <tr>
+            <td width="86" valign="top" style="font-family:'SF Mono','JetBrains Mono',Consolas,'Courier New',monospace;font-size:10px;letter-spacing:2px;color:#00ff88;text-transform:uppercase;padding:0 0 14px 0;">Ссылка</td>
+            <td valign="top" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:22px;padding:0 0 14px 0;"><a href="{{.OnlineURL}}" style="color:#ff00cc;border-bottom:1px solid #ff00cc;">Подключиться</a></td>
+          </tr>
+          {{end}}
+          {{if .PriceNote}}
+          <tr>
+            <td width="86" valign="top" style="font-family:'SF Mono','JetBrains Mono',Consolas,'Courier New',monospace;font-size:10px;letter-spacing:2px;color:#00ff88;text-transform:uppercase;padding:0 0 14px 0;">Вход</td>
+            <td valign="top" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:22px;color:#fafafa;padding:0 0 14px 0;">{{.PriceNote}}</td>
+          </tr>
+          {{end}}
+          {{if .Organizer}}
+          <tr>
+            <td width="86" valign="top" style="font-family:'SF Mono','JetBrains Mono',Consolas,'Courier New',monospace;font-size:10px;letter-spacing:2px;color:#00ff88;text-transform:uppercase;padding:0 0 14px 0;">Кто</td>
+            <td valign="top" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:22px;color:#fafafa;padding:0 0 14px 0;">{{.Organizer}}</td>
+          </tr>
+          {{end}}
+        </table>
+      </td></tr>
+    </table>
+  </td></tr>
+
+  {{if .PassNote}}
+  <tr><td class="pad" style="padding:18px 36px 0 36px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-left:3px solid #ff00cc;background:#1a0014;">
+      <tr><td style="padding:16px 18px;">
+        <div style="font-family:'SF Mono','JetBrains Mono',Consolas,'Courier New',monospace;font-size:10px;letter-spacing:2px;color:#ff00cc;text-transform:uppercase;padding-bottom:8px;">На входе</div>
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:23px;color:#f0e6f0;">{{.PassNote}}</div>
+      </td></tr>
+    </table>
+  </td></tr>
+  {{end}}
+
+  {{if .PageURL}}
+  <tr><td class="pad" style="padding:24px 36px 0 36px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>
+      <td class="btn-td" align="center" style="padding-right:8px;">
+        <a class="btn" href="{{.PageURL}}" style="display:inline-block;background:#00ff88;color:#0a0a0a;font-family:'SF Mono','JetBrains Mono',Consolas,'Courier New',monospace;font-size:13px;font-weight:700;letter-spacing:2px;text-transform:uppercase;padding:15px 26px;">Страница события</a>
+      </td>
+      {{if .MapURL}}
+      <td class="btn-td" align="center">
+        <a class="btn" href="{{.MapURL}}" style="display:inline-block;border:1px solid #2a2a30;color:#fafafa;font-family:'SF Mono','JetBrains Mono',Consolas,'Courier New',monospace;font-size:13px;font-weight:700;letter-spacing:2px;text-transform:uppercase;padding:14px 26px;">Маршрут</a>
+      </td>
+      {{end}}
+    </tr></table>
+  </td></tr>
+  {{end}}
+
+  <tr><td class="pad" style="padding:20px 36px 0 36px;">
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#888;">📅 {{.CalendarHint}}</div>
+  </td></tr>
+
+  {{if .Answers}}
+  <tr><td class="pad" style="padding:26px 36px 0 36px;">
+    <div style="font-family:'SF Mono','JetBrains Mono',Consolas,'Courier New',monospace;font-size:10px;letter-spacing:3px;color:#666;text-transform:uppercase;padding-bottom:12px;">Что ты указал(а)</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      {{range .Answers}}
+      <tr>
+        <td valign="top" width="150" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#888;padding:0 10px 8px 0;">{{.Label}}</td>
+        <td valign="top" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#e6e6ea;padding:0 0 8px 0;">{{.Value}}</td>
+      </tr>
+      {{end}}
+    </table>
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#666;padding-top:6px;">Нашёл(ла) опечатку — ответь на это письмо, поправим до входа.</div>
+  </td></tr>
+  {{end}}
+
+  <tr><td class="pad" style="padding:30px 36px 30px 36px;">
+    <div style="height:1px;line-height:1px;font-size:0;background:#2a2a30;margin-bottom:18px;">&nbsp;</div>
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:19px;color:#666;">
+      Письмо пришло, потому что ты записался(ась) на это событие в афише Вшаге. Запись № {{.RegShort}}.<br>
+      Не приходишь — просто ответь на это письмо, освободим место.
+    </div>
+  </td></tr>
+
+</table>
+
+<div style="font-family:'SF Mono','JetBrains Mono',Consolas,'Courier New',monospace;font-size:10px;letter-spacing:3px;color:#3a3a42;padding-top:18px;text-transform:uppercase;">vshage.app</div>
+
+</td></tr>
+</table>
+</body>
+</html>

@@ -13,9 +13,11 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/pythonjsgo/vshage-afisha/internal/admin"
+	"github.com/pythonjsgo/vshage-afisha/internal/appnotify"
 	"github.com/pythonjsgo/vshage-afisha/internal/config"
 	"github.com/pythonjsgo/vshage-afisha/internal/events"
 	"github.com/pythonjsgo/vshage-afisha/internal/health"
+	"github.com/pythonjsgo/vshage-afisha/internal/mail"
 	"github.com/pythonjsgo/vshage-afisha/internal/tgevents"
 	"github.com/pythonjsgo/vshage-afisha/internal/webreg"
 	"github.com/pythonjsgo/vshage-afisha/pkg/db"
@@ -167,7 +169,10 @@ func main() {
 		})
 	})
 
-	events.StartNotifySender(ctx, pool, cfg.TGBotToken, cfg.TGChatID)
+	events.SetPublicBaseURL(cfg.PublicBaseURL)
+	events.StartNotifySender(ctx, pool, cfg.TGBotToken, cfg.TGChatID,
+		mail.NewSenderFromEnv(), appnotify.New(pool))
+	events.StartReminderLoop(ctx, pool)
 
 	log.Printf("afisha-backend listening on :%s", cfg.Port)
 	if err := http.ListenAndServe(":"+cfg.Port, r); err != nil {

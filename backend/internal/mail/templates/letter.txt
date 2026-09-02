@@ -1,0 +1,31 @@
+ВШАГЕ · АФИША
+{{.Kicker}}
+
+{{.Headline}}
+{{if .GuestName}}{{.GuestName}}, {{end}}{{.Lead}}
+
+{{.Title}}
+--------------------------------------------------
+Когда:  {{.WhenLong}}, {{.WhenTime}}
+{{if .Location}}Где:    {{.Location}}
+{{end}}{{if .MapURL}}Карта:  {{.MapURL}}
+{{end}}{{if .OnlineURL}}Ссылка: {{.OnlineURL}}
+{{end}}{{if .PriceNote}}Вход:   {{.PriceNote}}
+{{end}}{{if .Organizer}}Кто:    {{.Organizer}}
+{{end}}--------------------------------------------------
+{{if .PassNote}}
+НА ВХОДЕ
+{{.PassNote}}
+{{end}}{{if .PageURL}}
+Страница события: {{.PageURL}}
+{{end}}
+{{.CalendarHint}}
+{{if .Answers}}
+ЧТО ТЫ УКАЗАЛ(А)
+{{range .Answers}}{{.Label}}: {{.Value}}
+{{end}}Нашёл(ла) опечатку — ответь на это письмо, поправим до входа.
+{{end}}
+--
+Письмо пришло, потому что ты записался(ась) на это событие в афише Вшаге.
+Запись № {{.RegShort}}. Не приходишь — ответь на это письмо, освободим место.
+vshage.app

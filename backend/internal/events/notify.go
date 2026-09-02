@@ -12,24 +12,112 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/pythonjsgo/vshage-afisha/internal/mail"
 )
 
-// Уведомления о регистрациях в Telegram через outbox (миграция 010).
+// Уведомления о регистрациях через outbox (миграции 010 и 013).
 //
-// enqueueNotify пишет готовый текст в очередь В ТОЙ ЖЕ транзакции, что и
+// enqueue* пишет готовую доставку в очередь В ТОЙ ЖЕ транзакции, что и
 // регистрацию: сохранились вместе или никак. StartNotifySender — фоновый
-// отправщик: телега лежит или бэкенд перезапустился — строка переживёт и
+// отправщик: канал лежит или бэкенд перезапустился — строка переживёт и
 // доедет со следующего тика. Ошибка отправки НИКОГДА не влияет на саму
 // регистрацию, она только копит attempts/last_error в outbox.
+//
+// Каналов три и они равноправны:
+//   tg    — организатору в чат (payload = готовый текст)
+//   email — гостю письмо (payload = JSON письма, recipient = адрес)
+//   push  — организатору и админам в приложение (recipient = profile_id)
 
 const notifyTick = 10 * time.Second
+
+const (
+	channelTG    = "tg"
+	channelEmail = "email"
+	channelPush  = "push"
+)
 
 var mskZone = time.FixedZone("MSK", 3*60*60)
 
 func enqueueNotify(ctx context.Context, tx pgx.Tx, text string) error {
+	return enqueueChannel(ctx, tx, channelTG, "", text)
+}
+
+func enqueueChannel(ctx context.Context, tx pgx.Tx, channel, recipient, payload string) error {
 	_, err := tx.Exec(ctx,
-		`INSERT INTO registration_notify_outbox (payload) VALUES ($1)`, text)
+		`INSERT INTO registration_notify_outbox (channel, recipient, payload) VALUES ($1, NULLIF($2,''), $3)`,
+		channel, recipient, payload)
 	return err
+}
+
+// mailJob — письмо в очереди. Сериализуем целиком, а не «id записи, соберём
+// при отправке»: в момент записи все поля под рукой, а отправщику не нужны
+// ни JOIN'ы, ни живое событие. Удалили событие — письмо всё равно доедет тем,
+// кто уже записался, с тем текстом, который они ожидают.
+type mailJob struct {
+	To      string `json:"to"`
+	ToName  string `json:"to_name,omitempty"`
+	Subject string `json:"subject"`
+	HTML    string `json:"html"`
+	Text    string `json:"text"`
+	ICSName string `json:"ics_name,omitempty"`
+	ICS     []byte `json:"ics,omitempty"`
+}
+
+// pushJob — уведомление в приложение. Строка в notifications пишется
+// отправщиком, а не в транзакции записи: иначе гость видел бы уведомление
+// организатора мгновенно, а APNs-баннер — с задержкой, и рассинхрон между
+// списком и баннером пришлось бы объяснять.
+type pushJob struct {
+	ProfileID string `json:"profile_id"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	EventID   string `json:"event_id"`
+}
+
+// PushSender — то, что умеет доставить уведомление в приложение. Интерфейс
+// узкий, реализация в internal/appnotify; nil ⇒ канал выключен, и это
+// сообщается в лог на старте, а не молча.
+type PushSender interface {
+	Deliver(ctx context.Context, profileID, title, body, eventID string) error
+}
+
+type notifier struct {
+	pool     *pgxpool.Pool
+	botToken string
+	chatID   string
+	mailer   mail.Sender
+	pusher   PushSender
+}
+
+// StartNotifySender запускает вечный цикл доставки. Пустые креды канала —
+// сервис работает как раньше, но кричит в лог на старте, а не молчит: немой
+// канал уведомлений, выглядящий исправным, у нас уже был (алертманажер без
+// токена).
+func StartNotifySender(ctx context.Context, pool *pgxpool.Pool, botToken, chatID string, mailer mail.Sender, pusher PushSender) {
+	n := &notifier{pool: pool, botToken: botToken, chatID: chatID, mailer: mailer, pusher: pusher}
+	if botToken == "" || chatID == "" {
+		log.Print("notify: TG_BOT_TOKEN/TG_CHAT_ID не заданы — телеграм-уведомления ОТКЛЮЧЕНЫ")
+	}
+	if mailer == nil {
+		log.Print("notify: почта не настроена — письма о записи ОТКЛЮЧЕНЫ")
+	}
+	if pusher == nil {
+		log.Print("notify: пуши не настроены — уведомления в приложение ОТКЛЮЧЕНЫ")
+	}
+	log.Print("notify: отправщик запущен")
+	go func() {
+		t := time.NewTicker(notifyTick)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				n.drain(ctx)
+			}
+		}
+	}()
 }
 
 // registrationMessage собирает текст со ВСЕМИ полями записи — «чтоб ничего
@@ -68,75 +156,112 @@ func registrationMessage(eventTitle, name, contact, status, regID string,
 	)
 }
 
-// StartNotifySender запускает вечный цикл доставки. Пустые креды — сервис
-// работает как раньше, но кричит в лог на старте, а не молчит: немой канал
-// уведомлений, выглядящий исправным, у нас уже был (алертманажер без токена).
-func StartNotifySender(ctx context.Context, pool *pgxpool.Pool, botToken, chatID string) {
-	if botToken == "" || chatID == "" {
-		log.Print("tgnotify: TG_BOT_TOKEN/TG_CHAT_ID не заданы — уведомления о регистрациях ОТКЛЮЧЕНЫ")
-		return
-	}
-	log.Print("tgnotify: отправщик запущен")
-	go func() {
-		t := time.NewTicker(notifyTick)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				drainOutbox(ctx, pool, botToken, chatID)
-			}
-		}
-	}()
-}
-
-func drainOutbox(ctx context.Context, pool *pgxpool.Pool, botToken, chatID string) {
+func (n *notifier) drain(ctx context.Context) {
 	// SKIP LOCKED — на случай второй реплики; одиночному инстансу не мешает.
-	rows, err := pool.Query(ctx, `
-		SELECT id, payload FROM registration_notify_outbox
+	rows, err := n.pool.Query(ctx, `
+		SELECT id, COALESCE(channel,'tg'), COALESCE(recipient,''), payload
+		FROM registration_notify_outbox
 		WHERE sent_at IS NULL
 		ORDER BY id
 		LIMIT 20
 		FOR UPDATE SKIP LOCKED`)
 	if err != nil {
-		log.Printf("tgnotify: чтение outbox: %v", err)
+		log.Printf("notify: чтение outbox: %v", err)
 		return
 	}
 	type item struct {
-		id      int64
-		payload string
+		id        int64
+		channel   string
+		recipient string
+		payload   string
 	}
 	var batch []item
 	for rows.Next() {
 		var it item
-		if err := rows.Scan(&it.id, &it.payload); err != nil {
+		if err := rows.Scan(&it.id, &it.channel, &it.recipient, &it.payload); err != nil {
 			rows.Close()
-			log.Printf("tgnotify: scan: %v", err)
+			log.Printf("notify: scan: %v", err)
 			return
 		}
 		batch = append(batch, it)
 	}
 	rows.Close()
 
+	// Отказ одного канала не должен задерживать другие: телега лежит — письма
+	// всё равно уходят. Поэтому «подождать до следующего тика» действует на
+	// свой канал, а не на всю пачку.
+	stalled := map[string]bool{}
 	for _, it := range batch {
-		if err := sendTelegram(ctx, botToken, chatID, it.payload); err != nil {
-			log.Printf("tgnotify: отправка id=%d: %v", it.id, err)
-			_, _ = pool.Exec(ctx, `
+		if stalled[it.channel] {
+			continue
+		}
+		err := n.deliver(ctx, it.channel, it.recipient, it.payload)
+		if err != nil {
+			log.Printf("notify: отправка id=%d канал=%s: %v", it.id, it.channel, err)
+			_, _ = n.pool.Exec(ctx, `
 				UPDATE registration_notify_outbox
 				SET attempts = attempts + 1, last_error = $2
 				WHERE id = $1`, it.id, err.Error())
-			// Телега недоступна — остаток пачки подождёт следующего тика,
-			// долбить её в цикле бессмысленно.
-			return
+			stalled[it.channel] = true
+			continue
 		}
-		if _, err := pool.Exec(ctx, `
+		if _, err := n.pool.Exec(ctx, `
 			UPDATE registration_notify_outbox
 			SET sent_at = NOW(), attempts = attempts + 1, last_error = NULL
 			WHERE id = $1`, it.id); err != nil {
-			log.Printf("tgnotify: пометка id=%d: %v", it.id, err)
+			log.Printf("notify: пометка id=%d: %v", it.id, err)
 			return
 		}
+	}
+}
+
+func (n *notifier) deliver(ctx context.Context, channel, recipient, payload string) error {
+	switch channel {
+	case channelEmail:
+		if n.mailer == nil {
+			return fmt.Errorf("почта не настроена")
+		}
+		var j mailJob
+		if err := json.Unmarshal([]byte(payload), &j); err != nil {
+			return fmt.Errorf("разбор письма: %w", err)
+		}
+		to := j.To
+		if to == "" {
+			to = recipient
+		}
+		l := mail.Letter{To: to, ToName: j.ToName, Subject: j.Subject, HTML: j.HTML, Text: j.Text}
+		if len(j.ICS) > 0 {
+			name := j.ICSName
+			if name == "" {
+				name = "event.ics"
+			}
+			l.Attachments = []mail.Attachment{{
+				Filename: name,
+				MIMEType: `text/calendar; charset=utf-8; method=PUBLISH`,
+				Content:  j.ICS,
+			}}
+		}
+		return n.mailer.Send(l)
+
+	case channelPush:
+		if n.pusher == nil {
+			return fmt.Errorf("пуши не настроены")
+		}
+		var j pushJob
+		if err := json.Unmarshal([]byte(payload), &j); err != nil {
+			return fmt.Errorf("разбор пуша: %w", err)
+		}
+		id := j.ProfileID
+		if id == "" {
+			id = recipient
+		}
+		return n.pusher.Deliver(ctx, id, j.Title, j.Body, j.EventID)
+
+	default: // channelTG
+		if n.botToken == "" || n.chatID == "" {
+			return fmt.Errorf("телеграм не настроен")
+		}
+		return sendTelegram(ctx, n.botToken, n.chatID, payload)
 	}
 }
 

@@ -294,6 +294,10 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 			answerLines(fields, clean.Answers))); err != nil {
 			return nil, err
 		}
+		if err := afterSignup(ctx, tx, eventID, form, fields, clean, existingID,
+			ev.Registered+1, ev.MaxAttendees); err != nil {
+			return nil, err
+		}
 		if err := tx.Commit(ctx); err != nil {
 			return nil, err
 		}
@@ -322,6 +326,10 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 	if err := enqueueNotify(ctx, tx, registrationMessage(ev.Title, name, clean.ContactLine(),
 		status, registrationID, ev.Registered+1, ev.MaxAttendees, ev.StartTime, false,
 		answerLines(fields, clean.Answers))); err != nil {
+		return nil, err
+	}
+	if err := afterSignup(ctx, tx, eventID, form, fields, clean, registrationID,
+		ev.Registered+1, ev.MaxAttendees); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
