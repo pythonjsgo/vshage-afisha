@@ -64,6 +64,13 @@ type PublicEvent struct {
 	VenueLat   *float64 `json:"venue_lat,omitempty"`
 	VenueLon   *float64 `json:"venue_lon,omitempty"`
 	VenueMetro *string  `json:"venue_metro,omitempty"`
+	// RegForm / RegFields — конфигурация формы записи (см. internal/regform).
+	// Отдаются сырым JSON: сервер их не интерпретирует при выдаче, страница
+	// рисует по ним поля. Отсутствие или `v` меньше 1 означает прежнюю форму
+	// из двух полей — так живое событие не меняет форму под теми, кто её
+	// сейчас заполняет.
+	RegForm   json.RawMessage `json:"reg_form,omitempty"`
+	RegFields json.RawMessage `json:"reg_fields,omitempty"`
 }
 
 type ListQuery struct {
@@ -84,9 +91,18 @@ type ListResult struct {
 	Degraded []string `json:"degraded,omitempty"`
 }
 
+// PublicRegistrationInput is what the signup form sends. Name and Contact are
+// the two fields the board has always had; the rest exist only when the event
+// configures them (see internal/regform) and arrive empty otherwise, so an old
+// page posting just {name, contact} keeps working unchanged.
 type PublicRegistrationInput struct {
-	Name    string `json:"name"`
-	Contact string `json:"contact"`
+	Name       string            `json:"name"`
+	Contact    string            `json:"contact"`
+	FullName   string            `json:"full_name"`
+	Email      string            `json:"email"`
+	Phone      string            `json:"phone"`
+	TGUsername string            `json:"tg_username"`
+	Answers    map[string]string `json:"answers"`
 }
 
 type PublicRegistrationResult struct {
@@ -101,6 +117,10 @@ type RegistrationError struct {
 	Message     string  `json:"message"`
 	Status      int     `json:"-"`
 	ExternalURL *string `json:"external_registration_url,omitempty"`
+	// Fields — сообщение под каждым полем, которое не прошло проверку.
+	// Форма настраиваемая, полей может быть с десяток, и один общий текст
+	// сверху заставляет человека гадать, какое из них сервер не принял.
+	Fields map[string]string `json:"fields,omitempty"`
 }
 
 func (e *RegistrationError) Error() string {

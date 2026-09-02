@@ -36,7 +36,7 @@ func enqueueNotify(ctx context.Context, tx pgx.Tx, text string) error {
 // не проебать» (формулировка заказчика): событие, имя и контакт из формы,
 // статус, счётчик мест, id для разбирательств.
 func registrationMessage(eventTitle, name, contact, status, regID string,
-	taken int, capacity *int, startTime time.Time, repeat bool) string {
+	taken int, capacity *int, startTime time.Time, repeat bool, extra string) string {
 
 	seats := fmt.Sprintf("%d", taken)
 	if capacity != nil && *capacity > 0 {
@@ -50,6 +50,7 @@ func registrationMessage(eventTitle, name, contact, status, regID string,
 		"✍️ %s — %s\n"+
 			"Имя: %s\n"+
 			"Контакт: %s\n"+
+			"%s"+
 			"Статус: %s\n"+
 			"Занято: %s\n"+
 			"Событие: %s МСК\n"+
@@ -58,6 +59,7 @@ func registrationMessage(eventTitle, name, contact, status, regID string,
 		kind, eventTitle,
 		name,
 		contact,
+		extra,
 		status,
 		seats,
 		startTime.In(mskZone).Format("02.01 15:04"),

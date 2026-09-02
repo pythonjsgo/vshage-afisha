@@ -4,11 +4,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/pythonjsgo/vshage-afisha/internal/regform"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -39,7 +43,8 @@ const selectCols = `
 		SELECT url FROM afisha_event_photos
 		WHERE event_id = e.id
 		ORDER BY position ASC
-	), ARRAY[]::TEXT[])
+	), ARRAY[]::TEXT[]),
+	COALESCE(d.reg_form, '{}'::jsonb), COALESCE(d.reg_fields, '[]'::jsonb)
 `
 
 // Joins referenced by selectCols. Used by every SELECT in this file.
@@ -129,22 +134,16 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*PublicEvent, erro
 		&ev.PriceType, &ev.PriceMin, &ev.PriceMax, &ev.Currency,
 		&ev.City, &ev.VenueName, &ev.Address, &ev.OnlineURL, &ev.AgeLimit, &ev.AttendeesNote,
 		&ev.IsFeatured, &ev.FeaturedPosition,
-		&ev.OrganizerName, &ev.OrganizerPhoto, &ev.Photos); err != nil {
+		&ev.OrganizerName, &ev.OrganizerPhoto, &ev.Photos,
+		&ev.RegForm, &ev.RegFields); err != nil {
 		return nil, err
 	}
 	return &ev, nil
 }
 
 func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input PublicRegistrationInput) (*PublicRegistrationResult, error) {
-	name := strings.TrimSpace(input.Name)
-	contact := normalizePublicContact(input.Contact)
-	if len([]rune(name)) < 2 {
-		return nil, &RegistrationError{Status: http.StatusBadRequest, Code: "invalid_name", Message: "Укажите имя"}
-	}
-	if len(contact) < 5 {
-		return nil, &RegistrationError{Status: http.StatusBadRequest, Code: "invalid_contact", Message: "Укажите контакт для связи"}
-	}
-
+	// Проверка ввода стоит ПОСЛЕ загрузки события: набор полей и их
+	// обязательность — часть конфигурации события, а не константа кода.
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, err
@@ -162,6 +161,8 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 		ExternalURL  *string
 		Deadline     *time.Time
 		Registered   int
+		RegForm      []byte
+		RegFields    []byte
 	}
 	err = tx.QueryRow(ctx, `
 		SELECT
@@ -171,12 +172,14 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 			d.external_registration_url,
 			d.registration_deadline,
 			(SELECT count(*)::int FROM event_registrations er
-			 WHERE er.event_id = e.id AND er.status != 'cancelled')
+			 WHERE er.event_id = e.id AND er.status != 'cancelled'),
+			COALESCE(d.reg_form, '{}'::jsonb), COALESCE(d.reg_fields, '[]'::jsonb)
 		FROM events e
 		LEFT JOIN organizer_event_details d ON d.event_id = e.id
 		WHERE e.id = $1
 		FOR UPDATE OF e
-	`, eventID).Scan(&ev.ID, &ev.Title, &ev.Status, &ev.StartTime, &ev.MaxAttendees, &ev.RegMode, &ev.Visibility, &ev.ExternalURL, &ev.Deadline, &ev.Registered)
+	`, eventID).Scan(&ev.ID, &ev.Title, &ev.Status, &ev.StartTime, &ev.MaxAttendees, &ev.RegMode, &ev.Visibility, &ev.ExternalURL, &ev.Deadline, &ev.Registered,
+		&ev.RegForm, &ev.RegFields)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, &RegistrationError{Status: http.StatusNotFound, Code: "event_not_found", Message: "Событие не найдено"}
@@ -201,6 +204,44 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 	}
 	if ev.MaxAttendees != nil && *ev.MaxAttendees > 0 && ev.Registered >= *ev.MaxAttendees {
 		return nil, &RegistrationError{Status: http.StatusConflict, Code: "sold_out", Message: "Свободных мест больше нет"}
+	}
+
+	form := regform.Decode(ev.RegForm)
+	fields := regform.DecodeFields(ev.RegFields)
+	var (
+		name    string
+		contact string
+		clean   regform.Clean
+	)
+	if form.IsLegacy() {
+		// Событие без настроенной формы: те же два поля, те же коды ошибок,
+		// что и до появления настройки. Старая страница шлёт ровно это.
+		name = strings.TrimSpace(input.Name)
+		contact = normalizePublicContact(input.Contact)
+		if len([]rune(name)) < 2 {
+			return nil, &RegistrationError{Status: http.StatusBadRequest, Code: "invalid_name", Message: "Укажите имя"}
+		}
+		if len(contact) < 5 {
+			return nil, &RegistrationError{Status: http.StatusBadRequest, Code: "invalid_contact", Message: "Укажите контакт для связи"}
+		}
+		clean = regform.Clean{Name: name, Contact: contact}
+	} else {
+		var fieldErrs map[string]string
+		clean, fieldErrs = regform.Validate(form, fields, regform.Input{
+			Name: input.Name, FullName: input.FullName, Email: input.Email,
+			Phone: input.Phone, TGUsername: input.TGUsername,
+			Contact: input.Contact, Answers: input.Answers,
+		})
+		if fieldErrs != nil {
+			// Сообщения адресные: страница ставит каждое под своим полем.
+			// Один баннер сверху заставляет человека искать, что не так.
+			return nil, &RegistrationError{
+				Status: http.StatusBadRequest, Code: "invalid_form",
+				Message: "Проверь заполнение формы", Fields: fieldErrs,
+			}
+		}
+		name = clean.DisplayName()
+		contact = clean.DedupContact()
 	}
 
 	var profileID string
@@ -237,14 +278,20 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 		if err := tx.QueryRow(ctx, `
 			UPDATE event_registrations
 			SET status = $3, created_at = now(),
-			    signup_name = $4, signup_contact = $5
+			    signup_name = $4, signup_contact = $5,
+			    signup_full_name = NULLIF($6, ''), signup_email = NULLIF($7, ''),
+			    signup_phone = NULLIF($8, ''), signup_tg = NULLIF($9, ''),
+			    signup_answers = $10
 			WHERE event_id = $1 AND profile_id = $2
 			RETURNING id, status
-		`, eventID, profileID, status, name, contact).Scan(&existingID, &existingStatus); err != nil {
+		`, eventID, profileID, status, name, contact,
+			clean.FullName, clean.Email, clean.Phone, clean.TGDisplay,
+			answersJSON(clean.Answers)).Scan(&existingID, &existingStatus); err != nil {
 			return nil, err
 		}
-		if err := enqueueNotify(ctx, tx, registrationMessage(ev.Title, name, contact,
-			existingStatus, existingID, ev.Registered+1, ev.MaxAttendees, ev.StartTime, true)); err != nil {
+		if err := enqueueNotify(ctx, tx, registrationMessage(ev.Title, name, clean.ContactLine(),
+			existingStatus, existingID, ev.Registered+1, ev.MaxAttendees, ev.StartTime, true,
+			answerLines(fields, clean.Answers))); err != nil {
 			return nil, err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -263,14 +310,18 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 	// бы совсем (см. миграцию 009).
 	var registrationID string
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO event_registrations (event_id, profile_id, status, signup_name, signup_contact)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO event_registrations (event_id, profile_id, status, signup_name, signup_contact,
+			signup_full_name, signup_email, signup_phone, signup_tg, signup_answers)
+		VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''), $10)
 		RETURNING id
-	`, eventID, profileID, status, name, contact).Scan(&registrationID); err != nil {
+	`, eventID, profileID, status, name, contact,
+		clean.FullName, clean.Email, clean.Phone, clean.TGDisplay,
+		answersJSON(clean.Answers)).Scan(&registrationID); err != nil {
 		return nil, err
 	}
-	if err := enqueueNotify(ctx, tx, registrationMessage(ev.Title, name, contact,
-		status, registrationID, ev.Registered+1, ev.MaxAttendees, ev.StartTime, false)); err != nil {
+	if err := enqueueNotify(ctx, tx, registrationMessage(ev.Title, name, clean.ContactLine(),
+		status, registrationID, ev.Registered+1, ev.MaxAttendees, ev.StartTime, false,
+		answerLines(fields, clean.Answers))); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -295,7 +346,8 @@ func (r *Repository) query(ctx context.Context, sql string, args ...any) ([]Publ
 			&ev.PriceType, &ev.PriceMin, &ev.PriceMax, &ev.Currency,
 			&ev.City, &ev.VenueName, &ev.Address, &ev.OnlineURL, &ev.AgeLimit, &ev.AttendeesNote,
 			&ev.IsFeatured, &ev.FeaturedPosition,
-			&ev.OrganizerName, &ev.OrganizerPhoto, &ev.Photos); err != nil {
+			&ev.OrganizerName, &ev.OrganizerPhoto, &ev.Photos,
+			&ev.RegForm, &ev.RegFields); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				continue
 			}
@@ -431,4 +483,40 @@ func upsertPublicProfile(ctx context.Context, tx pgx.Tx, deviceID, name, contact
 		return profileID, nil
 	}
 	return profileID, update(profileID)
+}
+
+// answersJSON packs the organizer's own questions for storage. Nil for an
+// empty set, so a legacy two-field signup leaves the column NULL instead of
+// an empty object that later reads as «asked and answered with nothing».
+func answersJSON(answers map[string]string) []byte {
+	if len(answers) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(answers)
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
+// answerLines renders the answers for the organizer's Telegram notice, under
+// the organizer's own wording. Sorted so two notices about the same form list
+// the questions in the same order; map iteration would shuffle them.
+func answerLines(fields []regform.Field, answers map[string]string) string {
+	if len(answers) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(answers))
+	for k := range answers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(regform.LabelFor(fields, k))
+		b.WriteString(": ")
+		b.WriteString(answers[k])
+		b.WriteString("\n")
+	}
+	return b.String()
 }
