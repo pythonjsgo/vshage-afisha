@@ -68,6 +68,29 @@ func main() {
 		} else if has008 == 0 {
 			log.Fatal("SKIP_MIGRATIONS=1 but migration 008 (afisha_tg_events.venue/feed/anchor) is not applied — this binary requires it; apply 008 manually or unset SKIP_MIGRATIONS")
 		}
+		// Same class of drift, newer columns: every public signup INSERTs into
+		// registration_notify_outbox(channel, recipient) inside the very
+		// transaction that stores the registration (migration 013), and the
+		// sender selects next_attempt_at (014). Without them the first signup
+		// after boot fails and the visitor's registration is LOST, while the
+		// queue stops draining entirely. Refuse to serve instead.
+		for _, probe := range []struct{ table, column, migration string }{
+			{"registration_notify_outbox", "channel", "013"},
+			{"registration_notify_outbox", "next_attempt_at", "014"},
+			{"event_registrations", "reminder_mail_at", "013"},
+		} {
+			var found int
+			if err := pool.QueryRow(ctx, `
+				SELECT COUNT(*) FROM information_schema.columns
+				WHERE table_schema = current_schema()
+				  AND table_name = $1 AND column_name = $2
+			`, probe.table, probe.column).Scan(&found); err != nil {
+				log.Fatalf("probe migration %s: %v", probe.migration, err)
+			} else if found == 0 {
+				log.Fatalf("SKIP_MIGRATIONS=1 but migration %s (%s.%s) is not applied — this binary requires it",
+					probe.migration, probe.table, probe.column)
+			}
+		}
 	} else if err := db.RunMigrations(ctx, pool, db.MigrationService, db.FindMigrationsDir()); err != nil {
 		log.Fatalf("run migrations: %v", err)
 	}

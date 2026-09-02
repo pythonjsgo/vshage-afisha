@@ -36,10 +36,14 @@
   <meta property="og:title" content={data.event.title} />
   <meta property="og:description" content={ogDescription} />
   <meta property="og:image" content={ogImage} />
-  <!-- Без размеров телеграм рисует маленькую иконку сбоку вместо широкой
-       карточки: он верит объявленным w/h, а не скачанному файлу. -->
-  <meta property="og:image:width" content="1200" />
-  <meta property="og:image:height" content="630" />
+  <!-- Размеры объявляются ТОЛЬКО у нашей карточки: телеграм верит числам, а
+       не файлу, и 1200×630 на вертикальной чужой афише даёт обрезанное
+       превью. У импортированных событий обложка своя, пропорций мы не знаем —
+       пусть мессенджер измерит сам. -->
+  {#if !foreign}
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+  {/if}
   <meta property="og:image:alt" content={data.event.title} />
   <meta property="og:url" content={`${origin}/${data.event.id}`} />
   <meta name="twitter:card" content="summary_large_image" />

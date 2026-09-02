@@ -165,13 +165,19 @@ func answersFor(fields []regform.Field, clean regform.Clean) []mail.KV {
 // enqueueGuestMail кладёт письмо-подтверждение в очередь. Без адреса письма
 // нет — это не ошибка записи: почта обязательна не у каждого события.
 func enqueueGuestMail(ctx context.Context, tx pgx.Tx, ev mailEvent, form regform.FormConfig,
-	fields []regform.Field, clean regform.Clean, regID string) error {
+	fields []regform.Field, clean regform.Clean, regID, status string) error {
 
 	if clean.Email == "" {
 		return nil
 	}
+	// Событие с ручной модерацией кладёт человека в лист ожидания. Слать ему
+	// «место за тобой» — прямая ложь: места может и не оказаться.
+	kind := mail.KindConfirm
+	if status != "registered" {
+		kind = mail.KindWaitlist
+	}
 	s := mail.Signup{
-		Kind:      mail.KindConfirm,
+		Kind:      kind,
 		Event:     ev.toMail(),
 		GuestName: clean.DisplayName(),
 		Email:     clean.Email,
@@ -194,13 +200,14 @@ func enqueueLetter(ctx context.Context, tx pgx.Tx, s mail.Signup, regID string) 
 		alarm = ReminderLead
 	}
 	job := mailJob{
-		To:      s.Email,
-		ToName:  s.GuestName,
-		Subject: subject,
-		HTML:    html,
-		Text:    text,
-		ICSName: "vshage-event.ics",
-		ICS:     mail.ICS(s.Event, s.Event.ID+"-"+regID, alarm),
+		To:         s.Email,
+		EventStart: s.Event.Start,
+		ToName:     s.GuestName,
+		Subject:    subject,
+		HTML:       html,
+		Text:       text,
+		ICSName:    "vshage-event.ics",
+		ICS:        mail.ICS(s.Event, s.Event.ID+"-"+regID, alarm),
 	}
 	payload, err := json.Marshal(job)
 	if err != nil {
@@ -221,31 +228,14 @@ func enqueueOrganizerPush(ctx context.Context, tx pgx.Tx, ev mailEvent, guest st
 	}
 	body := fmt.Sprintf("%s · %s · мест занято %s", guest, ev.Title, seats)
 
-	// Ошибка ПОИСКА получателей не роняет запись: человек записался, и терять
-	// это из-за того, что мы не смогли выбрать, кому звякнуть, нельзя.
-	// Ошибка самой постановки в очередь — роняет: очередь и запись живут в
-	// одной транзакции по построению, и молча разъехаться они не должны.
-	rows, err := tx.Query(ctx, `
-		SELECT id::text FROM profiles
-		WHERE (id::text = $1 OR is_admin) AND status = 'active'`, ev.OrganizerID)
+	// Ошибка ПОИСКА получателей не должна ронять запись человека — но просто
+	// вернуть nil мало: неудачный запрос переводит транзакцию в aborted, и
+	// тогда падает уже COMMIT, то есть регистрация всё равно теряется, а в
+	// логе стоит безобидная строчка. Поэтому поиск идёт во ВЛОЖЕННОЙ
+	// транзакции: pgx делает из неё SAVEPOINT, и откат возвращает внешнюю
+	// транзакцию в рабочее состояние.
+	targets, err := pushTargets(ctx, tx, ev)
 	if err != nil {
-		log.Printf("notify: получатели пуша для %s: %v", ev.ID, err)
-		return nil
-	}
-	var targets []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			log.Printf("notify: получатели пуша для %s: %v", ev.ID, err)
-			return nil
-		}
-		targets = append(targets, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		// pgx прячет отказ прав именно здесь: без этой проверки «нет доступа
-		// к profiles» выглядит как «получателей нет».
 		log.Printf("notify: получатели пуша для %s: %v", ev.ID, err)
 		return nil
 	}
@@ -271,7 +261,7 @@ func enqueueOrganizerPush(ctx context.Context, tx pgx.Tx, ev mailEvent, guest st
 // письмо гостю и уведомление организатору. Вызывается ВНУТРИ транзакции
 // записи, поэтому либо запись и обе доставки в очереди, либо ничего.
 func afterSignup(ctx context.Context, tx pgx.Tx, eventID string, form regform.FormConfig,
-	fields []regform.Field, clean regform.Clean, regID string, taken int, capacity *int) error {
+	fields []regform.Field, clean regform.Clean, regID, status string, taken int, capacity *int) error {
 
 	ev, err := scanMailEvent(tx.QueryRow(ctx, `
 		SELECT `+mailEventCols+`
@@ -282,10 +272,44 @@ func afterSignup(ctx context.Context, tx pgx.Tx, eventID string, form regform.Fo
 	if err != nil {
 		return err
 	}
-	if err := enqueueGuestMail(ctx, tx, ev, form, fields, clean, regID); err != nil {
+	if err := enqueueGuestMail(ctx, tx, ev, form, fields, clean, regID, status); err != nil {
 		return err
 	}
 	return enqueueOrganizerPush(ctx, tx, ev, clean.DisplayName(), taken, capacity)
+}
+
+func pushTargets(ctx context.Context, tx pgx.Tx, ev mailEvent) ([]string, error) {
+	sub, err := tx.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer sub.Rollback(ctx)
+
+	// id сравнивается как uuid, а не приведением к тексту: id::text убивает
+	// primary key и превращает поиск в чтение всей таблицы пользователей —
+	// на каждую запись, под блокировкой строки события.
+	rows, err := sub.Query(ctx, `
+		SELECT id::text FROM profiles
+		WHERE (id = NULLIF($1,'')::uuid OR is_admin) AND status = 'active'`, ev.OrganizerID)
+	if err != nil {
+		return nil, err
+	}
+	var targets []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		targets = append(targets, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		// pgx прячет отказ прав именно здесь: без этой проверки «нет доступа
+		// к profiles» выглядит как «получателей нет».
+		return nil, err
+	}
+	return targets, sub.Commit(ctx)
 }
 
 // StartReminderLoop раз в минуту ищет записи, которым пора напомнить, и

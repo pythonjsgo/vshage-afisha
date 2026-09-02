@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"strings"
+	texttemplate "text/template"
 	"time"
 	"unicode"
 )
@@ -18,7 +19,10 @@ var letterText string
 
 var (
 	htmlTpl = template.Must(template.New("letter").Parse(letterHTML))
-	textTpl = template.Must(template.New("letter.txt").Parse(letterText))
+	// Текстовая часть — text/template, а НЕ html/template: последний
+	// экранирует кавычки и амперсанды, и человек в текстовом клиенте читает
+	// «Ёлки &amp; Палки». Проверено прибором, а не рассуждением.
+	textTpl = texttemplate.Must(texttemplate.New("letter.txt").Parse(letterText))
 )
 
 // MSK — время в письмах всегда московское и всегда подписано. Человек читает
@@ -40,6 +44,9 @@ type Kind string
 const (
 	KindConfirm  Kind = "confirm"
 	KindReminder Kind = "reminder"
+	// KindWaitlist — событие с ручной модерацией: человек подал заявку, но
+	// места ему ещё не дали. «Место за тобой» тут было бы прямой ложью.
+	KindWaitlist Kind = "waitlist"
 )
 
 // Signup — всё, что письмо знает о конкретной записи.
@@ -100,13 +107,20 @@ func Render(s Signup) (subject, html, text string) {
 		GuestName: firstName(s.GuestName),
 		RegShort:  shortID(s.RegID),
 	}
-	if s.Kind == KindReminder {
+	switch s.Kind {
+	case KindReminder:
 		d.Kicker = "СЕГОДНЯ"
 		d.Headline = "Через " + humanLeft(time.Until(s.Event.Start))
 		d.Lead = "Напоминаем: ты записан(а). Ниже — время, адрес и что взять с собой."
 		d.CalendarHint = "Карточка события снова во вложении — если ещё не в календаре, добавь."
 		subject = fmt.Sprintf("Сегодня в %s — %s", start.Format("15:04"), s.Event.Title)
-	} else {
+	case KindWaitlist:
+		d.Kicker = "ЗАЯВКА ПРИНЯТА"
+		d.Headline = "Ждём подтверждения"
+		d.Lead = "Организатор подтверждает записи вручную. Мы напишем, когда место подтвердят, — сейчас идти не нужно."
+		d.CalendarHint = "Карточка события во вложении, чтобы дата не потерялась. Место она не бронирует."
+		subject = fmt.Sprintf("Заявка принята: %s — %s", s.Event.Title, ShortDate(start))
+	default:
 		d.Kicker = "ТЫ В СПИСКЕ"
 		d.Headline = "Записали"
 		d.Lead = "Место за тобой. Ниже — всё, что нужно знать до входа."

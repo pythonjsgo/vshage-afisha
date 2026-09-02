@@ -13,7 +13,9 @@ package mail
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -47,8 +49,11 @@ type Letter struct {
 
 // Sender отправляет одно письмо. Узкий интерфейс намеренно: подменить
 // транспорт можно, не трогая места вызова.
+//
+// ctx обязателен: отправщик очереди — одна горутина, и зависшее соединение
+// с релеем заморозило бы вместе с письмами телеграм и пуши. Молча и навсегда.
 type Sender interface {
-	Send(l Letter) error
+	Send(ctx context.Context, l Letter) error
 }
 
 // SMTPSender — рабочая реализация.
@@ -104,7 +109,11 @@ func NewSenderFromEnv() Sender {
 	return s
 }
 
-func (s *SMTPSender) Send(l Letter) error {
+// sendTimeout — потолок на всю сессию с релеем. Больше него отправка не
+// висит ни при каких обстоятельствах.
+const sendTimeout = 30 * time.Second
+
+func (s *SMTPSender) Send(ctx context.Context, l Letter) error {
 	if l.To == "" {
 		return errors.New("mail: пустой адрес получателя")
 	}
@@ -112,12 +121,87 @@ func (s *SMTPSender) Send(l Letter) error {
 	if err != nil {
 		return err
 	}
-	var auth smtp.Auth
-	if s.User != "" {
-		host, _, _ := net.SplitHostPort(s.Host)
-		auth = smtp.PlainAuth("", s.User, s.Pass, host)
+
+	sctx, cancel := context.WithTimeout(ctx, sendTimeout)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- s.deliver(l.To, msg) }()
+	select {
+	case <-sctx.Done():
+		// Соединение доживёт в своей горутине и закроется по дедлайну сокета;
+		// очередь при этом уже свободна.
+		return fmt.Errorf("mail: релей не ответил за %s: %w", sendTimeout, sctx.Err())
+	case err := <-done:
+		return err
 	}
-	return smtp.SendMail(s.Host, auth, s.FromAddr, []string{l.To}, msg)
+}
+
+// deliver разговаривает с релеем руками, а не через smtp.SendMail, по двум
+// причинам, и обе стоили бы боя.
+//
+// Первая: на проде релей слушает 465 — это НЕЯВНЫЙ TLS, где шифрование
+// начинается до приветствия. smtp.SendMail умеет только STARTTLS поверх
+// открытого соединения (587) и на 465 висит, ожидая приветствие, которого в
+// открытом виде не будет никогда.
+//
+// Вторая: у smtp.SendMail нет ни таймаута набора, ни дедлайна на сокете.
+// Мёртвый релей у нас уже был, и три недели этого никто не заметил.
+func (s *SMTPSender) deliver(to string, msg []byte) error {
+	host, port, err := net.SplitHostPort(s.Host)
+	if err != nil {
+		return fmt.Errorf("mail: адрес релея %q: %w", s.Host, err)
+	}
+
+	var conn net.Conn
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	if port == "465" {
+		conn, err = tls.DialWithDialer(dialer, "tcp", s.Host, &tls.Config{ServerName: host})
+	} else {
+		conn, err = dialer.Dial("tcp", s.Host)
+	}
+	if err != nil {
+		return fmt.Errorf("mail: соединение с %s: %w", s.Host, err)
+	}
+	_ = conn.SetDeadline(time.Now().Add(sendTimeout))
+	defer conn.Close()
+
+	c, err := smtp.NewClient(conn, host)
+	if err != nil {
+		return fmt.Errorf("mail: приветствие %s: %w", s.Host, err)
+	}
+	defer c.Close()
+
+	if port != "465" {
+		if ok, _ := c.Extension("STARTTLS"); ok {
+			if err := c.StartTLS(&tls.Config{ServerName: host}); err != nil {
+				return fmt.Errorf("mail: STARTTLS: %w", err)
+			}
+		}
+	}
+	if s.User != "" {
+		if ok, _ := c.Extension("AUTH"); ok {
+			if err := c.Auth(smtp.PlainAuth("", s.User, s.Pass, host)); err != nil {
+				return fmt.Errorf("mail: аутентификация: %w", err)
+			}
+		}
+	}
+	if err := c.Mail(s.FromAddr); err != nil {
+		return fmt.Errorf("mail: MAIL FROM: %w", err)
+	}
+	if err := c.Rcpt(to); err != nil {
+		return fmt.Errorf("mail: RCPT TO: %w", err)
+	}
+	w, err := c.Data()
+	if err != nil {
+		return fmt.Errorf("mail: DATA: %w", err)
+	}
+	if _, err := w.Write(msg); err != nil {
+		return fmt.Errorf("mail: тело: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("mail: закрытие тела: %w", err)
+	}
+	return c.Quit()
 }
 
 // build собирает MIME вручную. Структура:

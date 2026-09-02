@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -55,13 +56,17 @@ func enqueueChannel(ctx context.Context, tx pgx.Tx, channel, recipient, payload 
 // ни JOIN'ы, ни живое событие. Удалили событие — письмо всё равно доедет тем,
 // кто уже записался, с тем текстом, который они ожидают.
 type mailJob struct {
-	To      string `json:"to"`
-	ToName  string `json:"to_name,omitempty"`
-	Subject string `json:"subject"`
-	HTML    string `json:"html"`
-	Text    string `json:"text"`
-	ICSName string `json:"ics_name,omitempty"`
-	ICS     []byte `json:"ics,omitempty"`
+	To string `json:"to"`
+	// EventStart — когда начинается событие. Письмо лежит в очереди, пока
+	// канал недоступен; без этой отметки день, когда почту наконец настроят,
+	// начался бы с рассылки «ты записан(а)» на прошедшие события.
+	EventStart time.Time `json:"event_start,omitempty"`
+	ToName     string    `json:"to_name,omitempty"`
+	Subject    string    `json:"subject"`
+	HTML       string    `json:"html"`
+	Text       string    `json:"text"`
+	ICSName    string    `json:"ics_name,omitempty"`
+	ICS        []byte    `json:"ics,omitempty"`
 }
 
 // pushJob — уведомление в приложение. Строка в notifications пишется
@@ -187,6 +192,12 @@ func (n *notifier) drain(ctx context.Context) {
 		batch = append(batch, it)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		// pgx прячет отказ прав и обрыв соединения именно здесь: без этой
+		// проверки короткий батч выглядит как «очередь пуста».
+		log.Printf("notify: чтение outbox: %v", err)
+		return
+	}
 
 	// Отказ одного канала не должен задерживать другие: телега лежит — письма
 	// всё равно уходят. Поэтому «подождать до следующего тика» действует на
@@ -198,7 +209,10 @@ func (n *notifier) drain(ctx context.Context) {
 		}
 		err := n.deliver(ctx, it.channel, it.recipient, it.payload)
 		if err != nil {
-			log.Printf("notify: отправка id=%d канал=%s: %v", it.id, it.channel, err)
+			// Адрес получателя в тексте ошибки релея — персональные данные,
+			// а last_error хранится вечно и читается глазами. Режем.
+			msg := scrubAddress(err.Error(), it.recipient)
+			log.Printf("notify: отправка id=%d канал=%s: %s", it.id, it.channel, msg)
 			// Пауза растёт с попытками и упирается в пять минут: канал,
 			// который лежит час, не должен ни собирать восемь тысяч
 			// обращений, ни потерять строку.
@@ -206,7 +220,7 @@ func (n *notifier) drain(ctx context.Context) {
 				UPDATE registration_notify_outbox
 				SET attempts = attempts + 1, last_error = $2,
 				    next_attempt_at = NOW() + LEAST(attempts + 1, 30) * interval '10 seconds'
-				WHERE id = $1`, it.id, err.Error())
+				WHERE id = $1`, it.id, msg)
 			stalled[it.channel] = true
 			continue
 		}
@@ -214,7 +228,7 @@ func (n *notifier) drain(ctx context.Context) {
 			UPDATE registration_notify_outbox
 			SET sent_at = NOW(), attempts = attempts + 1, last_error = NULL,
 			    next_attempt_at = NULL
-			WHERE id = $1`, it.id); err != nil {
+			WHERE id = $1 AND sent_at IS NULL`, it.id); err != nil {
 			log.Printf("notify: пометка id=%d: %v", it.id, err)
 			return
 		}
@@ -235,6 +249,12 @@ func (n *notifier) deliver(ctx context.Context, channel, recipient, payload stri
 		if to == "" {
 			to = recipient
 		}
+		if !j.EventStart.IsZero() && time.Now().After(j.EventStart) {
+			// Событие прошло — письмо больше не про что. Возвращаем nil,
+			// строка помечается отправленной и не копится вечно.
+			log.Printf("notify: письмо на %s пропущено — событие уже прошло", to)
+			return nil
+		}
 		l := mail.Letter{To: to, ToName: j.ToName, Subject: j.Subject, HTML: j.HTML, Text: j.Text}
 		if len(j.ICS) > 0 {
 			name := j.ICSName
@@ -247,7 +267,7 @@ func (n *notifier) deliver(ctx context.Context, channel, recipient, payload stri
 				Content:  j.ICS,
 			}}
 		}
-		return n.mailer.Send(l)
+		return n.mailer.Send(ctx, l)
 
 	case channelPush:
 		if n.pusher == nil {
@@ -269,6 +289,15 @@ func (n *notifier) deliver(ctx context.Context, channel, recipient, payload stri
 		}
 		return sendTelegram(ctx, n.botToken, n.chatID, payload)
 	}
+}
+
+// scrubAddress убирает адрес получателя из текста, который мы собираемся
+// записать в базу и в лог.
+func scrubAddress(msg, recipient string) string {
+	if recipient == "" {
+		return msg
+	}
+	return strings.ReplaceAll(msg, recipient, "<получатель>")
 }
 
 func sendTelegram(ctx context.Context, botToken, chatID, text string) error {

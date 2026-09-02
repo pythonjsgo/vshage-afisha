@@ -26,6 +26,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/pythonjsgo/vshage-afisha/internal/events"
 )
 
 const (
@@ -44,7 +46,14 @@ type Sender struct {
 // New собирает отправителя. APNs может быть не настроен — тогда уведомление
 // всё равно появляется в списке в приложении, просто без баннера. Это
 // сообщается в лог: «пуш не ушёл» и «пуш не настроен» должны различаться.
-func New(pool *pgxpool.Pool) *Sender {
+//
+// Возвращает ИНТЕРФЕЙС, а не *Sender: вызывающая сторона проверяет nil, а
+// nil-указатель, положенный в интерфейс, перестаёт быть nil и падает уже
+// внутри Deliver.
+func New(pool *pgxpool.Pool) events.PushSender {
+	if pool == nil {
+		return nil
+	}
 	return &Sender{pool: pool, apns: newAPNs()}
 }
 

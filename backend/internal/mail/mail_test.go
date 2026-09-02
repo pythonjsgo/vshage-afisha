@@ -155,6 +155,40 @@ func TestUserTextIsEscapedInHTML(t *testing.T) {
 	}
 }
 
+// Текстовую часть читает человек, а не браузер. Прогон через html/template
+// выдавал ему «Ёлки &amp;amp; Палки — &amp;#34;вечер&amp;#34;».
+func TestPlainTextPartIsNotHTMLEscaped(t *testing.T) {
+	e := sampleEvent()
+	e.Title = `Ёлки & Палки — "вечер"`
+	e.VenueName = `Бар "Стрелка" & Ко`
+	_, _, text := Render(Signup{Kind: KindConfirm, Event: e, Email: "a@b.co"})
+	for _, bad := range []string{"&amp;", "&#34;", "&quot;", "&#39;"} {
+		if strings.Contains(text, bad) {
+			t.Errorf("в текстовой части экранированный HTML (%s):\n%s", bad, text)
+		}
+	}
+	if !strings.Contains(text, `Ёлки & Палки — "вечер"`) {
+		t.Error("название в текстовой части искажено")
+	}
+}
+
+// Ручная модерация кладёт человека в лист ожидания. Сказать ему «место за
+// тобой» — соврать: места может и не оказаться.
+func TestWaitlistLetterDoesNotPromiseASeat(t *testing.T) {
+	subject, html, text := Render(Signup{Kind: KindWaitlist, Event: sampleEvent(), Email: "a@b.co"})
+	if !strings.Contains(subject, "Заявка принята") {
+		t.Errorf("тема: %q", subject)
+	}
+	for _, body := range []string{html, text} {
+		if strings.Contains(body, "Место за тобой") || strings.Contains(body, "место за тобой") {
+			t.Error("письму из листа ожидания обещано место")
+		}
+		if !strings.Contains(body, "подтверждают") && !strings.Contains(body, "подтвердят") {
+			t.Error("не сказано, что запись ещё подтверждают")
+		}
+	}
+}
+
 func TestMIMEHasBothBodiesAndTheAttachment(t *testing.T) {
 	s := &SMTPSender{FromAddr: "noreply@vshage.app", FromName: "Вшаге"}
 	msg, err := s.build(Letter{

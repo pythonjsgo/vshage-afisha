@@ -295,7 +295,7 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 			return nil, err
 		}
 		if err := afterSignup(ctx, tx, eventID, form, fields, clean, existingID,
-			ev.Registered+1, ev.MaxAttendees); err != nil {
+			existingStatus, ev.Registered+1, ev.MaxAttendees); err != nil {
 			return nil, err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -329,7 +329,7 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 		return nil, err
 	}
 	if err := afterSignup(ctx, tx, eventID, form, fields, clean, registrationID,
-		ev.Registered+1, ev.MaxAttendees); err != nil {
+		status, ev.Registered+1, ev.MaxAttendees); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
