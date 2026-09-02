@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { page } from '$app/state';
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { formatEventDateLong } from '$lib/dateFormat';
@@ -9,6 +10,17 @@
   let submitting = $state(false);
 
   const event = $derived(data.event);
+  const origin = $derived(page.url.origin);
+  // Описание для превью: короткая строка организатора, иначе начало описания,
+  // иначе дата и место — пустое og:description мессенджер рисует пустотой.
+  const ogDescription = $derived(
+    event.short_description?.trim() ||
+      event.description?.trim().replace(/\s+/g, ' ').slice(0, 180) ||
+      [formatEventDateLong(event.start_time), event.venue_name ?? event.address ?? event.city]
+        .filter(Boolean)
+        .join(' · ')
+  );
+  const ogImage = $derived(`${origin}/api/og/${event.id}?kind=register`);
   const capacityLeft = $derived(
     typeof event.max_attendees === 'number'
       ? Math.max(0, event.max_attendees - event.attendee_count)
@@ -225,7 +237,26 @@
 
 <svelte:head>
   <title>Регистрация · {event.title} · Афиша Вшаге</title>
-  <meta name="description" content={event.short_description ?? event.description?.slice(0, 160) ?? 'Регистрация на событие Вшаге'} />
+  <meta name="description" content={ogDescription} />
+  <!--
+    Именно эту ссылку организатор рассылает людям, и до 03.09 у неё не было
+    ни одного og-тега: в телеграме она разворачивалась голой строкой адреса.
+    Карточка берётся с kind=register — у неё свой кикер «ЗАПИСЬ ОТКРЫТА».
+  -->
+  <meta property="og:site_name" content="Вшаге" />
+  <meta property="og:locale" content="ru_RU" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content={`${event.title} — запись открыта`} />
+  <meta property="og:description" content={ogDescription} />
+  <meta property="og:url" content={`${origin}/events/${event.id}/register`} />
+  <meta property="og:image" content={ogImage} />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content={event.title} />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content={`${event.title} — запись открыта`} />
+  <meta name="twitter:description" content={ogDescription} />
+  <meta name="twitter:image" content={ogImage} />
 </svelte:head>
 
 <main class="register-page">
