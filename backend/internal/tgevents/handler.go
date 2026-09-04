@@ -158,6 +158,16 @@ func (h *Handler) AdminPatch(w http.ResponseWriter, r *http.Request) {
 		Feed   *bool `json:"feed"`
 		Anchor *bool `json:"anchor"`
 		Hidden *bool `json:"hidden"`
+		// Курация 05.09: закрепление и снятие со списков с причиной.
+		Featured      *bool      `json:"featured"`
+		FeaturedUntil *time.Time `json:"featured_until"`
+		Listed        *bool      `json:"listed"`
+		HideReason    *string    `json:"hide_reason"`
+		// Actor — кто правит. Приходит от вызывающего (кабинет подставляет
+		// id владельца, наша админка — "admin"), потому что токен здесь один
+		// на всех и по нему автора не различить. Журнал без автора бесполезен
+		// ровно тогда, когда кураторов становится двое.
+		Actor string `json:"actor"`
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPatchBytes))
 	// Незнакомое поле — 400, а не молчаливое игнорирование: опечатка в
@@ -176,13 +186,26 @@ func (h *Handler) AdminPatch(w http.ResponseWriter, r *http.Request) {
 			map[string]string{"error": fmt.Sprintf("invalid_json: %v", err)})
 		return
 	}
-	if in.Feed == nil && in.Anchor == nil && in.Hidden == nil {
+	if in.Feed == nil && in.Anchor == nil && in.Hidden == nil &&
+		in.Featured == nil && in.Listed == nil {
 		writeJSON(w, http.StatusBadRequest,
-			map[string]string{"error": "empty_patch: нужно хотя бы одно из feed/anchor/hidden"})
+			map[string]string{"error": "empty_patch: нужно хотя бы одно из feed/anchor/hidden/featured/listed"})
 		return
 	}
-	st, err := h.repo.AdminSetFlags(r.Context(), chi.URLParam(r, "id"),
-		AdminFlags{Feed: in.Feed, Anchor: in.Anchor, Hidden: in.Hidden})
+	// Срок закрепления в прошлом — не «закрепить навсегда» и не «снять»: это
+	// команда, которой нельзя дать осмысленный ответ, и молча принять её
+	// значило бы показать куратору «закреплено» на строке, которую свип
+	// погасит через минуту.
+	if in.FeaturedUntil != nil && !in.FeaturedUntil.After(time.Now()) {
+		writeJSON(w, http.StatusBadRequest,
+			map[string]string{"error": "featured_until в прошлом — закрепление сгорит сразу"})
+		return
+	}
+	st, err := h.repo.AdminSetFlags(r.Context(), chi.URLParam(r, "id"), AdminFlags{
+		Feed: in.Feed, Anchor: in.Anchor, Hidden: in.Hidden,
+		Featured: in.Featured, FeaturedUntil: in.FeaturedUntil,
+		Listed: in.Listed, HideReason: in.HideReason, Actor: in.Actor,
+	})
 	if errors.Is(err, ErrNotFound) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
@@ -194,8 +217,8 @@ func (h *Handler) AdminPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	// Курация — ручное решение о том, что увидят люди: пишем в лог, кто во
 	// что превратился. Иначе «почему это событие в ленте» не восстановить.
-	log.Printf("tgevents: курация %s → feed=%v anchor=%v hidden=%v",
-		st.ID, st.Feed, st.Anchor, st.Hidden)
+	log.Printf("tgevents: курация %s (%s) → feed=%v anchor=%v hidden=%v featured=%v listed=%v",
+		st.ID, in.Actor, st.Feed, st.Anchor, st.Hidden, st.Featured, st.Listed)
 	writeJSON(w, http.StatusOK, st)
 }
 

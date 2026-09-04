@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -129,37 +131,130 @@ type AdminFlags struct {
 	Feed   *bool
 	Anchor *bool
 	Hidden *bool
+	// Курация 05.09. Featured — закрепление (лента применяет его
+	// закреплением в пост-обработке, а не весом). Listed=false — снято со
+	// списков, но открывается по прямой ссылке: розданные ссылки и записи не
+	// ломаются, и это НЕ hidden.
+	Featured      *bool
+	FeaturedUntil *time.Time
+	Listed        *bool
+	// HideReason пишется вместе с Listed=false и уезжает в журнал: на вопрос
+	// «почему это скрыто» отвечает запись, а не память куратора.
+	HideReason *string
+	// Actor — кто правит: id профиля из кабинета либо "admin". Пустой actor
+	// означает, что вызов пришёл мимо журналируемого пути, и это дефект: в
+	// журнале останется "unknown", по которому видно, что чинить.
+	Actor string
 }
 
 // AdminState — состояние строки ПОСЛЕ правки. Отдаём его, а не «ok»: курация
 // идёт руками, и единственный способ увидеть, что применилось именно то,
 // что просили, — прочитать ответ.
 type AdminState struct {
-	ID     string `json:"id"`
-	Feed   bool   `json:"feed"`
-	Anchor bool   `json:"anchor"`
-	Hidden bool   `json:"hidden"`
+	ID            string     `json:"id"`
+	Feed          bool       `json:"feed"`
+	Anchor        bool       `json:"anchor"`
+	Hidden        bool       `json:"hidden"`
+	Featured      bool       `json:"featured"`
+	FeaturedUntil *time.Time `json:"featured_until"`
+	Listed        bool       `json:"listed"`
+	HideReason    *string    `json:"hide_reason"`
 }
 
 // AdminSetFlags применяет частичную правку курации. ErrNotFound, если карточки
 // с таким id нет (скрытые правятся тоже — иначе снятое было бы не вернуть).
 func (r *Repository) AdminSetFlags(ctx context.Context, id string, f AdminFlags) (AdminState, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return AdminState{}, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	var st AdminState
-	// COALESCE с явным ::boolean: неназванное поле приезжает NULL-параметром,
-	// и без каста тип параметра выводить не из чего.
-	err := r.pool.QueryRow(ctx, `
+	// COALESCE с явным кастом: неназванное поле приезжает NULL-параметром, и
+	// без каста тип параметра выводить не из чего.
+	//
+	// hidden_by/hidden_at ставятся ТОЛЬКО при снятии со списков и только если
+	// раньше карточка была в них: повторное «скрыть» не должно переписывать
+	// имя того, кто скрыл на самом деле, и время, когда это случилось.
+	err = tx.QueryRow(ctx, `
 		UPDATE afisha_tg_events SET
-			feed       = COALESCE($2::boolean, feed),
-			anchor     = COALESCE($3::boolean, anchor),
-			hidden     = COALESCE($4::boolean, hidden),
-			updated_at = NOW()
+			feed           = COALESCE($2::boolean, feed),
+			anchor         = COALESCE($3::boolean, anchor),
+			hidden         = COALESCE($4::boolean, hidden),
+			featured       = COALESCE($5::boolean, featured),
+			featured_until = CASE WHEN $5::boolean IS NULL THEN featured_until
+			                      WHEN $5::boolean THEN $6::timestamptz
+			                      ELSE NULL END,
+			listed         = COALESCE($7::boolean, listed),
+			hide_reason    = CASE WHEN $7::boolean IS FALSE THEN COALESCE($8::text, hide_reason)
+			                      WHEN $7::boolean IS TRUE  THEN NULL
+			                      ELSE hide_reason END,
+			hidden_by      = CASE WHEN $7::boolean IS FALSE AND listed THEN NULLIF($9::text, '')
+			                      WHEN $7::boolean IS TRUE THEN NULL
+			                      ELSE hidden_by END,
+			hidden_at      = CASE WHEN $7::boolean IS FALSE AND listed THEN NOW()
+			                      WHEN $7::boolean IS TRUE THEN NULL
+			                      ELSE hidden_at END,
+			updated_at     = NOW()
 		WHERE id = $1
-		RETURNING id, feed, anchor, hidden`,
-		id, f.Feed, f.Anchor, f.Hidden).Scan(&st.ID, &st.Feed, &st.Anchor, &st.Hidden)
+		RETURNING id, feed, anchor, hidden, featured, featured_until, listed, hide_reason`,
+		id, f.Feed, f.Anchor, f.Hidden, f.Featured, f.FeaturedUntil, f.Listed,
+		f.HideReason, f.Actor,
+	).Scan(&st.ID, &st.Feed, &st.Anchor, &st.Hidden, &st.Featured,
+		&st.FeaturedUntil, &st.Listed, &st.HideReason)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AdminState{}, ErrNotFound
 	}
-	return st, err
+	if err != nil {
+		return AdminState{}, err
+	}
+	if err := logCuration(ctx, tx, id, f, st); err != nil {
+		return AdminState{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AdminState{}, fmt.Errorf("commit: %w", err)
+	}
+	return st, nil
+}
+
+// logCuration пишет запись журнала В ТОЙ ЖЕ транзакции, что и правку.
+// Отдельным запросом «после» она бы терялась ровно тогда, когда нужнее всего:
+// при отказе на полпути осталось бы изменение без следа о том, кто его внёс.
+func logCuration(ctx context.Context, tx pgx.Tx, id string, f AdminFlags, st AdminState) error {
+	action := "edit"
+	switch {
+	case f.Featured != nil && *f.Featured:
+		action = "feature"
+	case f.Featured != nil && !*f.Featured:
+		action = "unfeature"
+	case f.Listed != nil && !*f.Listed, f.Hidden != nil && *f.Hidden:
+		action = "hide"
+	case f.Listed != nil && *f.Listed, f.Hidden != nil && !*f.Hidden:
+		action = "unhide"
+	}
+	changes, err := json.Marshal(map[string]any{
+		"feed": f.Feed, "anchor": f.Anchor, "hidden": f.Hidden,
+		"featured": f.Featured, "featured_until": f.FeaturedUntil,
+		"listed": f.Listed, "after": st,
+	})
+	if err != nil {
+		return fmt.Errorf("журнал курации: %w", err)
+	}
+	actor := f.Actor
+	if strings.TrimSpace(actor) == "" {
+		// Не отказ: правка уже применена, и терять её из-за неизвестного
+		// автора хуже, чем записать его неизвестным. Строка "unknown" в
+		// журнале — сама по себе находка: значит есть путь мимо авторизации.
+		actor = "unknown"
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO afisha_curation_log (event_id, actor, action, reason, changes)
+		VALUES ($1, $2, $3, $4, $5)`, id, actor, action, f.HideReason, changes)
+	if err != nil {
+		return fmt.Errorf("журнал курации: %w", err)
+	}
+	return nil
 }
 
 // AdminListItem — строка списка курации. Ни annonce, ни payload: во втором
