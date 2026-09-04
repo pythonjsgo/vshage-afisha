@@ -41,6 +41,11 @@ type Card struct {
 	RegistrationURL *string `json:"registration_url,omitempty"`
 	AccessLevel     string  `json:"access_level"`
 	Segment         *string `json:"segment,omitempty"`
+	// Category — код словаря ленты 0.7 (network internal/feed/taxonomy.go).
+	// Отсутствие поля — законное значение: старый конвейер его не шлёт, и
+	// читатель выводит категорию из Segment по-прежнему. Присланное же
+	// значение обязано быть кодом словаря — см. Validate.
+	Category        *string `json:"category,omitempty"`
 	OrgName         *string `json:"org_name,omitempty"`
 	SourceURL       *string `json:"source_url,omitempty"`
 	// Payload принимается при импорте и хранится, но наружу не отдаётся:
@@ -69,6 +74,21 @@ const maxCoverBytes = 3 << 20
 // а не повод молча записать "unknown".
 var accessLevels = map[string]bool{
 	"open": true, "university": true, "invite": true, "unknown": true,
+}
+
+// feedCategories — словарь категорий ленты 0.7, дословная копия
+// network internal/feed/taxonomy.go (allCategories). Копия, а не импорт:
+// афиша и core-api — разные сервисы в разных репозиториях, общей библиотеки
+// между ними нет, а поле едет по HTTP. Здесь граница доверия: код вне
+// словаря — брак конвейера, и лучше отказать заливке одной карточки, чем
+// записать значение, которое лента молча свернёт в `other` и никто не
+// заметит. Пополняется ВМЕСТЕ со словарём ленты, одним заходом.
+var feedCategories = map[string]bool{
+	"concert": true, "party": true, "lecture": true, "workshop": true,
+	"exhibition": true, "market": true, "sport": true, "theatre_cinema": true,
+	"networking": true, "excursion": true, "campus": true, "family": true,
+	"dating": true, "nightlife": true, "spiritual": true, "health": true,
+	"other": true,
 }
 
 const dateLayout = "2006-01-02"
@@ -106,6 +126,12 @@ func (c *Card) Validate() error {
 	}
 	if !accessLevels[c.AccessLevel] {
 		return fmt.Errorf("access_level %q вне словаря", c.AccessLevel)
+	}
+	// Категория необязательна (старый конвейер её не шлёт), но присланная
+	// проверяется: неизвестный код лента свернёт в `other` без единого следа,
+	// и опечатка в конвейере проявилась бы как «почему-то всё в прочем».
+	if c.Category != nil && strings.TrimSpace(*c.Category) != "" && !feedCategories[*c.Category] {
+		return fmt.Errorf("category %q вне словаря ленты", *c.Category)
 	}
 	// «19:00» разбирается, «19.00», «9:00», «19:00-21:00» и «весь день» — нет,
 	// и молча становились бы полуночью, то есть неотличимы от «времени нет».

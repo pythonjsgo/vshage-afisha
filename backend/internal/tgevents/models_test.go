@@ -54,6 +54,13 @@ func TestValidateRejects(t *testing.T) {
 		// от «времени нет», и различить это после записи уже невозможно.
 		{"time_start не HH:MM", func(c *Card) { bad := "19.00"; c.TimeStart = &bad }, "time_start"},
 		{"time_start диапазоном", func(c *Card) { bad := "19:00-21:00"; c.TimeStart = &bad }, "time_start"},
+		// Категория едет в ранжировщик ленты, и неизвестный код он свернёт в
+		// `other` молча — опечатка конвейера проявилась бы как «почему-то всё
+		// в прочем», через неделю и без следа в логах.
+		{"category вне словаря ленты",
+			func(c *Card) { bad := "koncert"; c.Category = &bad }, "category"},
+		{"category значением сегмента, а не кодом словаря",
+			func(c *Card) { bad := "culture"; c.Category = &bad }, "category"},
 		{"обложка без mime", func(c *Card) { b := "aGkh"; c.CoverB64 = &b }, "cover_mime"},
 		{"обложка с не-картиночным mime",
 			func(c *Card) { b, m := "aGkh", "text/html"; c.CoverB64, c.CoverMime = &b, &m }, "cover_mime"},
@@ -70,5 +77,45 @@ func TestValidateRejects(t *testing.T) {
 				t.Fatalf("ошибка %q не называет поле %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestValidateAcceptsEveryFeedCategory — словарь категорий продублирован из
+// ленты вручную (общей библиотеки между сервисами нет), поэтому он обязан
+// проверяться перечислением: пропущенный при пополнении код отклонял бы
+// заливку целой рубрики, и увидели бы мы это ночным прогоном, а не здесь.
+func TestValidateAcceptsEveryFeedCategory(t *testing.T) {
+	for _, code := range []string{
+		"concert", "party", "lecture", "workshop", "exhibition", "market",
+		"sport", "theatre_cinema", "networking", "excursion", "campus",
+		"family", "dating", "nightlife", "spiritual", "health", "other",
+	} {
+		c := validCard()
+		c.Category = &code
+		if err := c.Validate(); err != nil {
+			t.Errorf("код словаря %q отклонён: %v", code, err)
+		}
+	}
+	if len(feedCategories) != 17 {
+		t.Errorf("в словаре %d кодов, в ленте 0.7 их 17 — списки разъехались",
+			len(feedCategories))
+	}
+}
+
+// TestCategoryIsOptional — старый конвейер категорию не шлёт, и это законно:
+// читатель выводит её из segment по-прежнему. Отказ здесь остановил бы
+// заливку студенческих карточек, которые ездят с 02.09.
+func TestCategoryIsOptional(t *testing.T) {
+	c := validCard()
+	if c.Category != nil {
+		t.Fatal("образец карточки не должен нести категорию")
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("карточка без категории отклонена: %v", err)
+	}
+	empty := ""
+	c.Category = &empty
+	if err := c.Validate(); err != nil {
+		t.Fatalf("пустая категория отклонена, а это то же «не прислали»: %v", err)
 	}
 }
