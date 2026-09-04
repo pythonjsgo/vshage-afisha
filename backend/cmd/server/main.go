@@ -185,6 +185,14 @@ func main() {
 		r.Get("/tg-events/admin/list", tgHandler.AdminList)
 		r.Patch("/tg-events/admin/{id}", tgHandler.AdminPatch)
 
+		// Реестр внешних источников (миграция 017): личность организатора,
+		// у которого нет кабинета. Статический "admin" стоит перед {key} по
+		// той же причине, что и у tg-events, — chi матчит его первым.
+		r.Put("/sources/admin/bulk", tgHandler.AdminSourcesBulk)
+		r.Get("/sources/{key}", tgHandler.SourceGet)
+		r.Get("/sources/{key}/logo", tgHandler.SourceLogo)
+		r.Get("/sources/{key}/events", tgHandler.SourceEvents)
+
 		r.Route("/admin", func(r chi.Router) {
 			r.Use(admin.AuthMiddleware(cfg.AdminJWTSecret))
 			r.Post("/featured", adminHandler.Feature)

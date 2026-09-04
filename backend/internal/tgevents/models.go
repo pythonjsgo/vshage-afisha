@@ -48,6 +48,10 @@ type Card struct {
 	Category        *string `json:"category,omitempty"`
 	OrgName         *string `json:"org_name,omitempty"`
 	SourceURL       *string `json:"source_url,omitempty"`
+	// SourceKey — строка реестра (afisha_sources), то есть личность
+	// организатора, у которого нет кабинета. Отсутствие законно: карточка
+	// старше реестра, и читатель выводит сообщество из org_name, как раньше.
+	SourceKey       *string `json:"source_key,omitempty"`
 	// Payload принимается при импорте и хранится, но наружу не отдаётся:
 	// внутри полная карточка с чужим текстом поста (юр. рамка витрины).
 	Payload map[string]any `json:"payload,omitempty"`
@@ -156,6 +160,12 @@ func (c *Card) Validate() error {
 	// чужое мероприятие — ровно то, ради чего мы вообще не пишем в events.
 	if c.SourceURL == nil || strings.TrimSpace(*c.SourceURL) == "" {
 		return fmt.Errorf("пустой source_url")
+	}
+	// Ключ проверяется той же регуляркой, что и строка реестра: он уезжает в
+	// адрес страницы источника и в community_follows на стороне core-api, и
+	// мусор здесь развалил бы подписку молча — она просто не совпадёт.
+	if c.SourceKey != nil && strings.TrimSpace(*c.SourceKey) != "" && !sourceKeyRe.MatchString(*c.SourceKey) {
+		return fmt.Errorf("source_key %q не вида <пространство>:<адрес>", *c.SourceKey)
 	}
 	if c.CoverB64 != nil && *c.CoverB64 != "" {
 		if c.CoverMime == nil || !coverMimes[*c.CoverMime] {

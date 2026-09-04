@@ -73,9 +73,9 @@ func (r *Repository) UpsertBulk(ctx context.Context, cards []Card) (int, error) 
 				(id, title, annonce, date, date_end, time_start, city,
 				 place_name, address, online, price_raw, is_free,
 				 registration_url, access_level, segment, category, org_name,
-				 source_url, payload, cover, cover_mime, updated_at)
+				 source_url, source_key, payload, cover, cover_mime, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-			        $13, $14, $15, $16, $17, $18, $19, $20, $21, NOW())
+			        $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, NOW())
 			ON CONFLICT (id) DO UPDATE SET
 				title            = EXCLUDED.title,
 				annonce          = EXCLUDED.annonce,
@@ -98,6 +98,10 @@ func (r *Repository) UpsertBulk(ctx context.Context, cards []Card) (int, error) 
 				category         = COALESCE(EXCLUDED.category, afisha_tg_events.category),
 				org_name         = EXCLUDED.org_name,
 				source_url       = EXCLUDED.source_url,
+				-- COALESCE: конвейер, который ключа ещё не шлёт (или прислал
+				-- пустой), не должен обезличивать уже привязанную карточку —
+				-- вместе с ней отвалилась бы и подписка на её организатора.
+				source_key       = COALESCE(EXCLUDED.source_key, afisha_tg_events.source_key),
 				payload          = EXCLUDED.payload,
 				cover            = COALESCE(EXCLUDED.cover, afisha_tg_events.cover),
 				cover_mime       = COALESCE(EXCLUDED.cover_mime, afisha_tg_events.cover_mime),
@@ -105,7 +109,7 @@ func (r *Repository) UpsertBulk(ctx context.Context, cards []Card) (int, error) 
 			c.ID, c.Title, c.Annonce, c.Date, c.DateEnd, c.TimeStart, c.City,
 			c.PlaceName, c.Address, c.Online, c.PriceRaw, c.IsFree,
 			c.RegistrationURL, c.AccessLevel, c.Segment, c.Category, c.OrgName,
-			c.SourceURL, payload, cover, coverMime,
+			c.SourceURL, c.SourceKey, payload, cover, coverMime,
 		); err != nil {
 			return 0, fmt.Errorf("карточка %s: %w", c.ID, err)
 		}

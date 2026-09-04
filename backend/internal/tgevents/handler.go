@@ -225,3 +225,97 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 		log.Printf("tgevents.writeJSON: %v", err)
 	}
 }
+
+// --- Реестр источников (миграция 017) --------------------------------------
+
+// SourceGet — GET /api/sources/{key}: кто этот организатор, откуда мы его
+// индексируем и сколько у него будущих событий. Страница источника на афише
+// строится по этому ответу.
+func (h *Handler) SourceGet(w http.ResponseWriter, r *http.Request) {
+	key := chi.URLParam(r, "key")
+	src, err := h.repo.GetSource(r.Context(), key)
+	if errors.Is(err, ErrSourceNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	if err != nil {
+		log.Printf("tgevents.SourceGet %s: %v", key, err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=300, stale-while-revalidate=900")
+	writeJSON(w, http.StatusOK, src)
+}
+
+// SourceLogo — GET /api/sources/{key}/logo: байты логотипа со своего origin.
+// Своего, а не чужого: аватар t.me живёт на их CDN и протухает за дни.
+func (h *Handler) SourceLogo(w http.ResponseWriter, r *http.Request) {
+	data, mime, err := h.repo.SourceLogo(r.Context(), chi.URLParam(r, "key"))
+	if errors.Is(err, ErrNoLogo) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	if err != nil {
+		log.Printf("tgevents.SourceLogo: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
+		return
+	}
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
+	_, _ = w.Write(data)
+}
+
+// SourceEvents — GET /api/sources/{key}/events: будущие события источника.
+func (h *Handler) SourceEvents(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	list, err := h.repo.SourceEvents(r.Context(), chi.URLParam(r, "key"), limit)
+	if err != nil {
+		log.Printf("tgevents.SourceEvents: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal"})
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=60, stale-while-revalidate=300")
+	writeJSON(w, http.StatusOK, map[string]any{"events": list, "count": len(list)})
+}
+
+// AdminSourcesBulk — PUT /api/sources/admin/bulk: реестр из конвейера.
+// Тот же токен и та же форма, что у заливки карточек: один админ афиши, одна
+// схема авторизации.
+func (h *Handler) AdminSourcesBulk(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	var in struct {
+		Sources []Source `json:"sources"`
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	if err := dec.Decode(&in); err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			writeJSON(w, http.StatusRequestEntityTooLarge,
+				map[string]string{"error": fmt.Sprintf("too_large: партия больше %d МБ", maxBodyBytes>>20)})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_json"})
+		return
+	}
+	if len(in.Sources) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "empty_batch"})
+		return
+	}
+	for i, s := range in.Sources {
+		if err := s.Validate(); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("источник #%d (%s): %v", i, s.Key, err)})
+			return
+		}
+	}
+	n, hidden, err := h.repo.UpsertSources(r.Context(), in.Sources)
+	if err != nil {
+		log.Printf("tgevents.AdminSourcesBulk: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	log.Printf("tgevents: реестр применён, источников: %d, погашено карточек отозванных: %d", n, hidden)
+	writeJSON(w, http.StatusOK, map[string]int{"upserted": n, "hidden_cards": hidden})
+}
