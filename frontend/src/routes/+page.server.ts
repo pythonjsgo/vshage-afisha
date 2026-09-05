@@ -13,7 +13,12 @@ export const load: PageServerLoad = async ({ fetch, setHeaders }) => {
   // объёму, потолок бэкенда теперь 300 (maxPageSize == maxWindow).
   // Дальше нужна не большая цифра, а «показать ещё»: offset у /api/events
   // работает, страница его пока не использует.
-  const res = await fetch(`${backend}/api/events?limit=200`);
+  // 300 — потолок бэкенда (maxPageSize == maxWindow). Городской слой уехал на
+  // прод 06.09 и сразу дал 268 будущих событий; двухсот уже не хватало, и
+  // подпись честно писала «200 ИЗ 268». Следующий раз цифру двигать нельзя —
+  // нужна пагинация «показать ещё»: offset у /api/events работает, страница
+  // его не использует.
+  const res = await fetch(`${backend}/api/events?limit=300`);
   if (!res.ok) {
     return { featured: [], all: [], total: 0 } as ListResult;
   }
