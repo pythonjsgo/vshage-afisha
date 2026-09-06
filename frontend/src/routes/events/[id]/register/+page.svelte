@@ -227,7 +227,12 @@
   }
 
   function formatPrice(type?: string, min?: number, max?: number, currency = 'RUB') {
-    if (!type || type === 'free') return 'Бесплатно';
+    // Отсутствие типа — это «не знаем», а не «бесплатно». Колонка
+    // price_type в базе NOT NULL, так что пусто здесь означает событие без
+    // строки деталей кабинета — доска такие держит намеренно. Печатать им
+    // «Бесплатно» значит обещать человеку бесплатный вход от своего имени.
+    if (!type) return 'Цена не указана';
+    if (type === 'free') return 'Бесплатно';
     if (type === 'donation') return 'Донат';
     if (typeof min !== 'number' && typeof max !== 'number') return 'Платно';
     if (typeof min === 'number' && typeof max === 'number' && max !== min) return `${min}-${max} ${currency}`;

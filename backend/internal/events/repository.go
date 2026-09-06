@@ -34,7 +34,13 @@ const selectCols = `
 	COALESCE((SELECT COUNT(*) FROM event_registrations r
 	          WHERE r.event_id = e.id AND r.status != 'cancelled'), 0),
 	COALESCE(d.registration_mode, 'auto'), d.external_registration_url, d.registration_deadline,
-	COALESCE(d.price_type, 'free'), d.price_min, d.price_max, COALESCE(d.currency, 'RUB'),
+	-- price_type БЕЗ подстановки «free». Колонка NOT NULL DEFAULT 'free', то
+	-- есть NULL здесь означает ровно одно: строки деталей нет вовсе, а такое
+	-- событие доска держит намеренно (см. boardBase). Подставить «free»
+	-- значило бы от своего имени пообещать человеку бесплатный вход туда,
+	-- про что мы ничего не знаем, — и заодно напечатать offers.price: 0 в
+	-- разметке для поисковика. «Не знаю» и «бесплатно» — разные утверждения.
+	d.price_type, d.price_min, d.price_max, COALESCE(d.currency, 'RUB'),
 	d.city, d.venue_name, d.address, d.online_url, d.age_limit, d.attendees_note,
 	f.position IS NOT NULL,
 	f.position,
@@ -62,6 +68,35 @@ const (
 	visibleByLink  = `COALESCE(d.visibility, 'public') IN ('public', 'unlisted')`
 )
 
+// boardBase — предикат доски одним текстом: опубликовано, не старше суток,
+// видимо на доске. $1 — граница «не старше суток», её ставит первым
+// аргументом каждый вызывающий.
+//
+// Раньше эти три условия стояли в каждом запросе своей копией. Пока копий
+// было три (закреплённое, список, счётчик), они держались; с фасетами их
+// стало бы шесть, а расходятся такие копии тихо: подпись «показано N из M»
+// врёт ровно на разницу между предикатом списка и предикатом счётчика.
+const boardBase = `e.status = 'published' AND e.start_time >= $1 AND ` + visibleOnBoard
+
+// boardCountFrom — минимальный FROM для счётчиков: только таблицы, на которые
+// смотрят условия фильтра. Профили и провайдеры нужны карточке, а не счёту.
+const boardCountFrom = `FROM events e
+	LEFT JOIN organizer_event_details d ON d.event_id = e.id`
+
+// mainStore — какими колонками общий стор отвечает на вопросы фильтра ленты
+// (см. StoreSQL). Одно описание на список, счётчик и фасеты.
+var mainStore = StoreSQL{
+	City:     "d.city",
+	Category: "e.category",
+	// Только явное «free». Событие без строки деталей кабинета в раздел
+	// «Бесплатно» не попадает: неизвестная цена — не бесплатная. Прежде здесь
+	// стояло COALESCE(d.price_type,'free') — зеркало такой же подстановки в
+	// selectCols; убраны обе разом, иначе раздел и карточка разошлись бы.
+	Free: "d.price_type = 'free'",
+	Start: "e.start_time",
+	End:   "COALESCE(e.end_time, e.start_time)",
+}
+
 // Joins referenced by selectCols. Used by every SELECT in this file.
 //
 // providers — это КАБИНЕТ организатора, и его display_name — то имя, под
@@ -80,18 +115,25 @@ func (r *Repository) List(ctx context.Context, q ListQuery) (ListResult, error) 
 	if since.IsZero() {
 		since = time.Now().Add(-24 * time.Hour)
 	}
-
-	featured, err := r.query(ctx, `
-		SELECT `+selectCols+selectFrom+`
-		INNER JOIN afisha_featured f ON f.event_id = e.id
-		WHERE e.status = 'published'
-		  AND e.start_time >= $1
-		  AND `+visibleOnBoard+`
-		ORDER BY f.position ASC, e.start_time ASC
-		LIMIT 10
-	`, since)
-	if err != nil {
-		return ListResult{}, err
+	// Закреплённое относится к доске ГОРОДА, а не к разделу: закреплённый
+	// концерт в шапке страницы «Выставки» — это ложь, причём убедительная,
+	// она стоит первой. Поэтому при непустом фильтре список закреплённого
+	// пуст, и запрос за ним даже не делается.
+	featured := []PublicEvent{}
+	if q.Filter.IsEmpty() {
+		a := NewSQLArgs(since)
+		var err error
+		featured, err = r.query(ctx, `
+			SELECT `+selectCols+selectFrom+`
+			INNER JOIN afisha_featured f ON f.event_id = e.id
+			WHERE `+boardBase+`
+			  AND (`+mainStore.Where(q.Filter, a)+`)
+			ORDER BY f.position ASC, e.start_time ASC
+			LIMIT 10
+		`, a.All()...)
+		if err != nil {
+			return ListResult{}, err
+		}
 	}
 
 	// Потолок общий с хендлером (maxWindow): раньше здесь стояло `> 100 → 30`,
@@ -104,32 +146,54 @@ func (r *Repository) List(ctx context.Context, q ListQuery) (ListResult, error) 
 	if limit > maxWindow {
 		limit = maxWindow
 	}
+	// Фильтр применяется В SQL, а не после выборки: окно режется до фильтра,
+	// и отсев в Go отдал бы разделу обрезки полной ленты — «12 из 417», где
+	// двенадцать это остаток страницы, а не число событий раздела.
+	aList := NewSQLArgs(since)
+	whereList := mainStore.Where(q.Filter, aList)
 	all, err := r.query(ctx, `
 		SELECT `+selectCols+selectFrom+`
 		LEFT JOIN afisha_featured f ON f.event_id = e.id
-		WHERE e.status = 'published'
-		  AND e.start_time >= $1
-		  AND `+visibleOnBoard+`
+		WHERE `+boardBase+`
+		  AND (`+whereList+`)
 		ORDER BY e.start_time ASC
-		LIMIT $2 OFFSET $3
-	`, since, limit, q.Offset)
+		LIMIT `+aList.Add(limit)+` OFFSET `+aList.Add(q.Offset), aList.All()...)
 	if err != nil {
 		return ListResult{}, err
 	}
 
+	// Счётчик — под ТЕМ ЖЕ фильтром. Общий total на странице раздела
+	// написал бы «12 из 417» и был бы прочитан как «остальное ниже».
+	aCount := NewSQLArgs(since)
+	whereCount := mainStore.Where(q.Filter, aCount)
 	var total int
 	if err := r.pool.QueryRow(ctx, `
 		SELECT COUNT(*)
-		FROM events e
-		LEFT JOIN organizer_event_details d ON d.event_id = e.id
-		WHERE e.status = 'published'
-		  AND e.start_time >= $1
-		  AND `+visibleOnBoard+`
-	`, since).Scan(&total); err != nil {
+		`+boardCountFrom+`
+		WHERE `+boardBase+`
+		  AND (`+whereCount+`)
+	`, aCount.All()...).Scan(&total); err != nil {
 		return ListResult{}, err
 	}
 
 	return ListResult{Featured: featured, All: all, Total: total}, nil
+}
+
+// Facets — счётчики общего стора под текущим фильтром. Предикат доски и
+// выражения фильтра те же, что у списка: считает их общая CountFacets, а не
+// вторая, похожая реализация.
+func (r *Repository) Facets(ctx context.Context, since time.Time, f Filter) (Facets, error) {
+	if since.IsZero() {
+		since = time.Now().Add(-24 * time.Hour)
+	}
+	return CountFacets(ctx, FacetQuery{
+		Pool:  r.pool,
+		Store: mainStore,
+		From:  boardCountFrom,
+		Base:  boardBase,
+		Seed:  []any{since},
+		Name:  "main",
+	}, f)
 }
 
 func (r *Repository) GetByID(ctx context.Context, id string) (*PublicEvent, error) {

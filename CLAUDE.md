@@ -17,7 +17,7 @@ afisha-frontend (SvelteKit 2)  ──→  afisha-backend (Go :3004)  ──→  
 
 ## Tech Stack
 
-- **Backend**: Go 1.25, chi/v5, sqlc + pgx/v5, port 3004
+- **Backend**: Go 1.25, chi/v5, pgx/v5 (**запросы пишутся руками**, sqlc в репозитории нет — проверено 06.09: ни `sqlc.yaml`, ни одного `*.sql.go`, при 28 вызовах `pool.Query`), port 3004
 - **Frontend**: SvelteKit 2, Svelte 5 (runes + snippets), TypeScript, Vite, Node 22
 - **OG images**: `@resvg/resvg-js` + `satori` (generated at build time, served from `/api/og/*`)
 - **Tests**: Playwright for frontend e2e, Go test for backend
@@ -39,15 +39,15 @@ afisha-frontend (SvelteKit 2)  ──→  afisha-backend (Go :3004)  ──→  
 `.github/workflows/`:
 - `backend-ci.yml` — go vet + test + docker build/push on push to dev/main + paths backend/**
 - `frontend-ci.yml` — npm + svelte-check + docker build/push on push to dev/main + paths frontend/**
-- `deploy-dev.yml` — workflow_run cascade: when both CIs succeed on `dev`, ssh deploy to s2
+- `deploy-dev.yml` — workflow_run cascade: when both CIs succeed on `dev`, ssh deploy to the DEV host `64.188.80.28` (1cent/Finland). «s2» в прежней формулировке — брошенный Senko `91.132.163.213`, туда деплоить нельзя
 
-Secrets: `SSH_PRIVATE_KEY_DEV` (ssh root@s2) + GHCR token (auto via GITHUB_TOKEN with packages:write).
+Secrets: `SSH_PRIVATE_KEY_DEV` (ssh root@64.188.80.28) + GHCR token (auto via GITHUB_TOKEN with packages:write).
 
 ## Commands
 
 ```bash
 # Backend
-cd backend && go run ./cmd/api/        # local server :3004
+cd backend && go run ./cmd/server/     # local server :3004
 cd backend && go test ./... -count=1
 cd backend && docker build --platform linux/amd64 -t ghcr.io/pythonjsgo/afisha-backend:dev .
 
@@ -89,7 +89,7 @@ frontend/
 - Russian UI strings, English code/comments
 - `--platform linux/amd64` on Docker builds
 - Frontend: Svelte 5 runes (`$state`, `$derived`, `$effect`) — no `$:` reactive blocks
-- Backend: sqlc for ALL SQL (no raw `pool.Query`)
+- Backend: SQL пишется руками через pgx (`pool.Query` / `QueryRow`), рядом — комментарий о том, ПОЧЕМУ условие такое. Прежняя строка «sqlc for ALL SQL» была неправдой с самого начала: sqlc в репозитории не заведён, и агент, поверивший ей вместо кода, начнёт искать несуществующие `.sql`-файлы
 - Public registration is rate-limited at the proxy (Caddy); don't disable
 - DB grants: read-only on most tables; write only on `event_registrations`
 - PR target: `dev` for normal work; `main` only when promoting to PROD

@@ -20,6 +20,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/pythonjsgo/vshage-afisha/internal/events"
 )
 
 // Card — витринная форма события. Одна структура на вход импорта и выход
@@ -80,21 +82,6 @@ var accessLevels = map[string]bool{
 	"open": true, "university": true, "invite": true, "unknown": true,
 }
 
-// feedCategories — словарь категорий ленты 0.7, дословная копия
-// network internal/feed/taxonomy.go (allCategories). Копия, а не импорт:
-// афиша и core-api — разные сервисы в разных репозиториях, общей библиотеки
-// между ними нет, а поле едет по HTTP. Здесь граница доверия: код вне
-// словаря — брак конвейера, и лучше отказать заливке одной карточки, чем
-// записать значение, которое лента молча свернёт в `other` и никто не
-// заметит. Пополняется ВМЕСТЕ со словарём ленты, одним заходом.
-var feedCategories = map[string]bool{
-	"concert": true, "party": true, "lecture": true, "workshop": true,
-	"exhibition": true, "market": true, "sport": true, "theatre_cinema": true,
-	"networking": true, "excursion": true, "campus": true, "family": true,
-	"dating": true, "nightlife": true, "spiritual": true, "health": true,
-	"other": true,
-}
-
 const dateLayout = "2006-01-02"
 const timeLayout = "15:04"
 
@@ -134,7 +121,13 @@ func (c *Card) Validate() error {
 	// Категория необязательна (старый конвейер её не шлёт), но присланная
 	// проверяется: неизвестный код лента свернёт в `other` без единого следа,
 	// и опечатка в конвейере проявилась бы как «почему-то всё в прочем».
-	if c.Category != nil && strings.TrimSpace(*c.Category) != "" && !feedCategories[*c.Category] {
+	// Словарь категорий переехал в internal/events (events.FeedCategories):
+	// его читают три стора ленты и разбор query, и вторая копия здесь
+	// разъехалась бы с первой в тот день, когда лента словарь пополнит.
+	// Граница доверия осталась ЗДЕСЬ: код вне словаря — брак конвейера, и
+	// лучше отказать заливке одной карточки, чем записать значение, которое
+	// лента молча свернёт в `other`.
+	if c.Category != nil && strings.TrimSpace(*c.Category) != "" && !events.IsFeedCategory(*c.Category) {
 		return fmt.Errorf("category %q вне словаря ленты", *c.Category)
 	}
 	// «19:00» разбирается, «19.00», «9:00», «19:00-21:00» и «весь день» — нет,

@@ -64,7 +64,7 @@ const selectCard = `
 		            THEN NULL ELSE time_start END AS eff_time,
 		       city, place_name, address, online,
 		       price_raw, is_free, registration_url, access_level,
-		       segment, org_name, source_url, venue,
+		       segment, category, org_name, source_url, venue,
 		       (cover IS NOT NULL) AS has_cover
 		FROM afisha_tg_events`
 
@@ -77,14 +77,41 @@ const selectCard = `
 // снова завести второе определение сдвига, которое уже дважды разъезжалось.
 const orderCard = `) t ORDER BY eff_date, COALESCE(eff_time, '00:00'), id`
 
-func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time, limit, offset int) ([]events.PublicEvent, error) {
+// afishaStore — какими колонками витрина tg отвечает на вопросы фильтра
+// ленты (см. events.StoreSQL). Одно описание на список, счётчик и фасеты:
+// три похожих условия в трёх запросах разъезжаются тихо, а видно это на
+// подписи «показано N из M».
+//
+// Категория берётся из колонки `category` (миграция 016) и НЕ выводится из
+// `segment`: сегмент — закрытый перечень из шести значений, словарь ленты —
+// из семнадцати, и вывод одного из другого приписывал бы концерту,
+// спектаклю и экскурсии одну и ту же рубрику. NULL здесь означает «конвейер
+// категорию не прислал», и такая карточка не попадает НИ В ОДИН раздел —
+// пустое честнее неверного: в общей ленте она остаётся.
+var afishaStore = events.StoreSQL{
+	City:     "city",
+	Category: "category",
+	Free:     "is_free IS TRUE",
+	Start:    "date",
+	End:      "COALESCE(date_end, date)",
+	Dates:    true,
+}
+
+// afishaBase — предикат витрины: не снято и ещё не прошло. Один текст на все
+// три запроса; номер аргумента у каждого свой, потому что в списке $1 занят
+// сдвигом eff_date (см. selectCard).
+func afishaBase(day string) string {
+	return "NOT hidden AND COALESCE(date_end, date) >= " + day + "::date"
+}
+
+func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time, f events.Filter, limit, offset int) ([]events.PublicEvent, error) {
 	// Клампинг, а не откат: просили больше потолка — отдаём потолок.
 	// Откат к 30 означал бы «страница набрана», когда она не набрана.
 	if limit <= 0 {
 		limit = 30
 	}
-	if limit > 300 {
-		limit = 300
+	if limit > events.MaxWindow {
+		limit = events.MaxWindow
 	}
 	if offset < 0 {
 		offset = 0
@@ -94,9 +121,15 @@ func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time, lim
 	// контейнере — UTC, и с полуночи до трёх ночи это другой день.
 	today := time.Now().In(msk).Format(dateLayout)
 
+	// Фильтр уезжает В SQL. Отсев в Go после выборки дал бы разделу обрезки
+	// уже нарезанного окна: окно режется до фильтра, и «показать ещё»
+	// добирало бы страницы, в которых нужных карточек нет вовсе.
+	a := events.NewSQLArgs(today)
+	base := afishaBase(a.Add(day))
+	where := afishaStore.Where(f, a)
 	rows, err := r.pool.Query(ctx, selectCard+`
-		WHERE NOT hidden AND COALESCE(date_end, date) >= $2`+orderCard+`
-		LIMIT $3 OFFSET $4`, today, day, limit, offset)
+		WHERE `+base+` AND (`+where+`)`+orderCard+`
+		LIMIT `+a.Add(limit)+` OFFSET `+a.Add(offset), a.All()...)
 	if err != nil {
 		return nil, err
 	}
@@ -113,15 +146,33 @@ func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time, lim
 	return out, rows.Err()
 }
 
-// CountUpcomingForAfisha — тот же WHERE, что и в выборке. Разойдутся условия —
-// разойдётся «показано N из M», и заметит это человек, долиставший до конца.
-func (r *Repository) CountUpcomingForAfisha(ctx context.Context, since time.Time) (int, error) {
+// CountUpcomingForAfisha — тот же WHERE, что и в выборке, включая фильтр.
+// Разойдутся условия — разойдётся «показано N из M», и заметит это человек,
+// долиставший до конца.
+func (r *Repository) CountUpcomingForAfisha(ctx context.Context, since time.Time, f events.Filter) (int, error) {
+	a := events.NewSQLArgs()
+	base := afishaBase(a.Add(since.In(msk).Format(dateLayout)))
+	where := afishaStore.Where(f, a)
 	var n int
 	err := r.pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM afisha_tg_events
-		WHERE NOT hidden AND COALESCE(date_end, date) >= $1
-	`, since.In(msk).Format(dateLayout)).Scan(&n)
+		WHERE `+base+` AND (`+where+`)
+	`, a.All()...).Scan(&n)
 	return n, err
+}
+
+// FacetsForAfisha — счётчики витрины под текущим фильтром. Считает их общая
+// events.CountFacets тем же описанием стора и тем же предикатом витрины, что
+// и список: иначе плитка обещает 119, а открывается 12.
+func (r *Repository) FacetsForAfisha(ctx context.Context, since time.Time, f events.Filter) (events.Facets, error) {
+	return events.CountFacets(ctx, events.FacetQuery{
+		Pool:  r.pool,
+		Store: afishaStore,
+		From:  "FROM afisha_tg_events",
+		Base:  afishaBase("$1"),
+		Seed:  []any{since.In(msk).Format(dateLayout)},
+		Name:  r.AfishaSourceName(),
+	}, f)
 }
 
 // AfishaSourceName — как источник называется в поле degraded ленты.
@@ -188,7 +239,7 @@ func scanCard(rows scanner) (cardRow, error) {
 		&effDate, &row.Eff.Time,
 		&row.Card.City, &row.Card.PlaceName, &row.Card.Address, &row.Card.Online,
 		&row.Card.PriceRaw, &row.Card.IsFree, &row.Card.RegistrationURL,
-		&row.Card.AccessLevel, &row.Card.Segment, &row.Card.OrgName,
+		&row.Card.AccessLevel, &row.Card.Segment, &row.Card.Category, &row.Card.OrgName,
 		&row.Card.SourceURL, &row.Venue, &row.HasCover)
 	row.Eff.Date = effDate.Format(dateLayout)
 	return row, err
@@ -282,6 +333,12 @@ func toPublic(row cardRow) events.PublicEvent {
 		Source:           &source,
 		StartTimeKnown:   &timeKnown,
 	}
+	// Сдвиг сортировки не должен уезжать в разметку как факт: если показанный
+	// старт не равен настоящему, отдаём настоящий отдельным полем.
+	if e.Date != c.Date {
+		actual := c.Date
+		ev.ActualStartDate = &actual
+	}
 	if c.DateEnd != nil && *c.DateEnd != "" && *c.DateEnd != c.Date {
 		// Конец многодневной программы — конец её последнего дня, иначе
 		// выставка «до 20 сентября» исчезала бы из ленты утром 20-го.
@@ -299,6 +356,13 @@ func toPublic(row cardRow) events.PublicEvent {
 	}
 	if c.OrgName != nil && *c.OrgName != "" {
 		ev.OrganizerName = c.OrgName
+	}
+	// Категория едет наружу тем же кодом словаря, по которому фильтрует
+	// доска: без неё карточка в разделе не может показать, что она из этого
+	// раздела, а чип категории пришлось бы выводить на фронте вторым
+	// правилом — то есть завести второй словарь.
+	if c.Category != nil && *c.Category != "" {
+		ev.Category = c.Category
 	}
 	if c.IsFree != nil && *c.IsFree {
 		ev.PriceType = strPtr("free")

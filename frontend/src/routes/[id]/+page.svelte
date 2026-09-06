@@ -1,6 +1,7 @@
 <script lang="ts">
   import EventDetail from '$lib/components/EventDetail.svelte';
   import { page } from '$app/state';
+  import { eventJsonLd, eventUrl, jsonLdScript, type City } from '$lib/seo';
   let { data } = $props();
   const origin = $derived(page.url.origin);
   // Сгенерированная карточка /api/og/<uuid> положена ТОЛЬКО событиям общей
@@ -25,14 +26,35 @@
           : `${origin}/og-default.png`)
       : `${origin}/api/og/${data.event.id}`
   );
+
+  // Канонический адрес. На одну карточку ведут ТРИ маршрута — /<id>,
+  // /events/<id> (308) и /e/<slug> у веб-регистрации, — и без этой строки
+  // поисковик считает их разными страницами с одинаковым текстом и делит вес
+  // между ними. Адрес собирает eventUrl и только он: карта сайта зовёт ту же
+  // функцию, поэтому разъехаться они не могут.
+  //
+  // og:url намеренно оставлен прежним (/<id>): мессенджер показывает витрину
+  // с обложкой и полным описанием — это разные вопросы. Поисковику мы
+  // называем адрес, который индексируем; мессенджеру — тот, которым делимся.
+  const canonical = $derived(eventUrl(origin, data.event));
+
+  // Город нужен разметке ради addressLocality: без города адрес события
+  // читается роботом как «где-то в России», и в локальной выдаче карточка не
+  // участвует. Падежи здесь не нужны — eventJsonLd берёт только name; полная
+  // форма города живёт в бэкенде (internal/events/cities.go).
+  const cityForLd = $derived<City | undefined>(
+    data.event.city ? { slug: '', name: data.event.city, in: '', of: '' } : undefined
+  );
+  const eventLd = $derived(jsonLdScript(eventJsonLd(data.event, origin, cityForLd)));
 </script>
 
 <svelte:head>
   <title>{data.event.title} · Афиша Вшаге</title>
   <meta name="description" content={ogDescription} />
+  <link rel="canonical" href={canonical} />
   <meta property="og:site_name" content="Вшаге" />
   <meta property="og:locale" content="ru_RU" />
-  <meta property="og:type" content="website" />
+  <meta property="og:type" content="article" />
   <meta property="og:title" content={data.event.title} />
   <meta property="og:description" content={ogDescription} />
   <meta property="og:image" content={ogImage} />
@@ -50,6 +72,12 @@
   <meta name="twitter:title" content={data.event.title} />
   <meta name="twitter:description" content={ogDescription} />
   <meta name="twitter:image" content={ogImage} />
+  <!-- schema.org/Event — то, ради чего разметка и нужна: без неё афиша не
+       попадает ни в блок мероприятий Google, ни в колдунщик Яндекса.
+       Экранирование делает jsonLdScript: заголовок едет из телеграма и может
+       содержать закрывающий тег script, который иначе разорвал бы разметку.
+       Поэтому здесь {@html} без обработки — вторая только испортила бы JSON. -->
+  {@html `<script type="application/ld+json">${eventLd}<\/script>`}
 </svelte:head>
 
 <EventDetail event={data.event} {origin} />

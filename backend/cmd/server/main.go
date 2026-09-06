@@ -162,6 +162,10 @@ func main() {
 
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/events", evHandler.List)
+		// Статический "facets" стоит в одном узле с параметром {id}: chi
+		// матчит статический сегмент первым, и порядок регистрации на это не
+		// влияет — та же схема, что у tg-events/admin ниже.
+		r.Get("/events/facets", evHandler.Facets)
 		r.Get("/events/{id}", evHandler.GetByID)
 		r.Post("/events/{id}/registrations", evHandler.RegisterPublic)
 

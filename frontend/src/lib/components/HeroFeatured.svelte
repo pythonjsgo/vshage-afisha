@@ -23,9 +23,14 @@
     <div class="overlay"></div>
     <div class="content">
       <div class="kicker">FEATURED · {String(idx + 1).padStart(2, '0')} / {String(events.length).padStart(2, '0')}</div>
-      <h1 class="title">
+      <!-- Заголовок закреплённого события — НЕ <h1>. Главный заголовок
+           страницы теперь принадлежит городу или разделу («Концерты в
+           Москве»), и второй h1 внутри карусели размывает тему страницы для
+           поисковика: он читает их как два конкурирующих утверждения о том,
+           про что страница. Класс и вид не меняются — селектор .title. -->
+      <p class="title">
         <GlitchText text={active.title} />
-      </h1>
+      </p>
       <div class="meta">
         <span>{formatEventDateLong(active.start_time)}</span>
         {#if active.location}

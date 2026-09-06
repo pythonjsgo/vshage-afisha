@@ -6,7 +6,9 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -24,24 +26,51 @@ import (
 // странице, поэтому вторая страница повторяла первую, а total не равнялся
 // числу событий, которые лента способна отдать. Пока источник был один и
 // отдавал единицы событий, оба дефекта были незаметны.
+//
+// Фильтр — тоже часть контракта, и он в СИГНАТУРЕ, а не в необязательном
+// интерфейсе с проверкой типа: источник, молча не применивший фильтр, отдал
+// бы в раздел «Выставки» свои концерты, а счётчик при этом сошёлся бы сам с
+// собой. Расширение интерфейса ломает компиляцию у обоих реализующих
+// репозиториев — это и есть прибор, который нельзя забыть запустить.
 type ExtraSource interface {
-	UpcomingForAfisha(ctx context.Context, since time.Time, limit, offset int) ([]PublicEvent, error)
-	CountUpcomingForAfisha(ctx context.Context, since time.Time) (int, error)
+	UpcomingForAfisha(ctx context.Context, since time.Time, f Filter, limit, offset int) ([]PublicEvent, error)
+	CountUpcomingForAfisha(ctx context.Context, since time.Time, f Filter) (int, error)
+	FacetsForAfisha(ctx context.Context, since time.Time, f Filter) (Facets, error)
 }
 
 // Потолки страницы. Раньше их роль играли разрозненные `> 100 → 30` внутри
 // источников: не потолок, а тихая подмена запрошенного окна.
 const (
 	defaultPageSize = 30
-	// maxPageSize — потолок одной страницы. Был 100 при maxWindow 300: два
-	// потолка противоречили друг другу, и когда городской слой довёл ленту
-	// до 150 событий, главная (она просит одну страницу и «показать ещё» не
-	// имеет) уперлась в сотню и написала «СОБЫТИЯ · 90 ИЗ 150». Пятьдесят
-	// событий стали недостижимы из интерфейса вообще — ровно тот отказ, от
-	// которого страницу уже лечили в августе, только на новом объёме.
-	maxPageSize = 300
-	maxWindow   = 300
+	// maxPageSize — сколько отдаём за ОДИН запрос, maxWindow — как глубоко
+	// можно листать. До 06.09 они были равны (300/300), и это было верно,
+	// пока страница просила одну страницу целиком: тогда «размер страницы» и
+	// «глубина» были одним числом. С «показать ещё» это две разные величины,
+	// и держать их равными значит либо запретить глубину, либо разрешить
+	// выкачивать доску одним запросом.
+	//
+	// Что произойдёт, когда доска перерастёт maxWindow: события за окном
+	// станут недостижимы из интерфейса — «показать ещё» упрётся в 400. Это
+	// уже случалось на 150 событиях при потолке 90, и единственным признаком
+	// была подпись «СОБЫТИЯ · 90 ИЗ 150», которую прочитал человек. Поэтому
+	// ниже, в List, стоит строка в лог: прибор обязан кричать сам, а не
+	// ждать, пока кто-нибудь сверит два числа глазами.
+	maxPageSize = 200
+	maxWindow   = 1000
 )
+
+// MaxWindow — тот же maxWindow наружу, для источников ленты. Свой потолок в
+// источнике, ниже общего, молча обрезал бы глубокую страницу: источник
+// вернул бы «сколько смог», слияние приняло бы это за «сколько есть», и
+// страница выглядела бы полной без части событий. Так уже было, когда внутри
+// источников стояло `> 100 → 30`.
+const MaxWindow = maxWindow
+
+// overWindowLoggedAt — когда последний раз жаловались на переросшую доску
+// (unix-секунды). Жалоба нужна каждый день, но не каждому запросу: при 1 rps
+// это 86 тысяч одинаковых строк в сутки, и в них утонет всё остальное.
+// Гонка здесь безобидна — худшее, что бывает, это две строки вместо одной.
+var overWindowLoggedAt atomic.Int64
 
 // sourceName — имя источника для поля degraded и для лога. Без него отказ
 // одного из двух сторов неотличим в ответе от «в нём просто ничего нет».
@@ -78,17 +107,30 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 
-	key := "afisha:events:list:" + strconv.Itoa(limit) + ":" + strconv.Itoa(offset)
-	if cached, ok := h.cache.GetList(ctx, key); ok {
-		writeJSON(w, http.StatusOK, cached)
+	// ВЕСЬ вход проверяется ДО того, как появится ключ кэша, и порядок здесь
+	// имеет значение.
+	//
+	// `/api/*` торчит наружу на afisha.vshage.app, и ключ, посчитанный по
+	// непроверенному значению, — это ключевое пространство редиса, которым
+	// распоряжается кто угодно снаружи. Записей оно не порождает (пишем мы
+	// только успешный ответ), но и обращаться в кэш за заведомо отказным
+	// запросом незачем. После проверок ключ собирается из СЛОВАРНЫХ значений
+	// фильтра и уже нормализованных limit/offset: `?limit=` и `?limit=30` —
+	// одна и та же страница, и делить одну запись они обязаны.
+	filter, err := ParseFilter(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Часы ставятся ОДИН раз на запрос: три стора ленты, взявшие каждый своё
+	// time.Now(), в полночь разрешат «сегодня» в разные дни.
+	filter.At = time.Now()
 
-	// Вход валидируется ЗДЕСЬ и явно. Раньше потолки стояли внутри каждого
-	// источника и при превышении не обрезали окно, а откатывались к 30 —
-	// то есть глубокая страница молча теряла события основного стора и
-	// выглядела полной. Отказ лучше тихой полуправды: `?offset=1000` — это
-	// ошибка вызывающего, а не повод показать неверную ленту.
+	// Потолки. Раньше они стояли внутри каждого источника и при превышении не
+	// обрезали окно, а откатывались к 30 — то есть глубокая страница молча
+	// теряла события основного стора и выглядела полной. Отказ лучше тихой
+	// полуправды: `?offset=1000` — это ошибка вызывающего, а не повод
+	// показать неверную ленту.
 	if limit <= 0 {
 		limit = defaultPageSize
 	}
@@ -108,7 +150,22 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 			"offset+limit больше "+strconv.Itoa(maxWindow)+" — лента столько не отдаёт")
 		return
 	}
-	result, listErr := h.repo.List(ctx, ListQuery{Limit: window, Offset: 0})
+
+	// Ключ несёт ВСЕ параметры фильтра. Пока он был
+	// `afisha:events:list:<limit>:<offset>`, страница раздела получила бы
+	// закэшированную полную ленту — 200, карточки есть, просто чужие, и на
+	// минуту одинаково у всех, кто открыл раздел.
+	//
+	// Списочные ключи никто не инвалидирует — они живут ровно свои 60 секунд
+	// (единственный Invalidate ниже чистит карточку события). Значит
+	// удлинять TTL при выросшем числе ключей нельзя: раздел, отставший на
+	// минуту, человек не заметит, а отставший на пять — заметит.
+	key := filter.CacheKey(limit, offset)
+	if cached, ok := h.cache.GetList(ctx, key); ok {
+		writeJSON(w, http.StatusOK, cached)
+		return
+	}
+	result, listErr := h.repo.List(ctx, ListQuery{Limit: window, Offset: 0, Filter: filter})
 	if listErr != nil {
 		log.Printf("events.List: %v", listErr)
 	}
@@ -125,13 +182,13 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	since := time.Now().Add(-24 * time.Hour)
 	for _, src := range h.extra {
 		name := sourceName(src)
-		page, err := src.UpcomingForAfisha(ctx, since, window, 0)
+		page, err := src.UpcomingForAfisha(ctx, since, filter, window, 0)
 		if err != nil {
 			log.Printf("events.List: источник %s: %v", name, err)
 			degraded = append(degraded, name)
 			continue
 		}
-		n, err := src.CountUpcomingForAfisha(ctx, since)
+		n, err := src.CountUpcomingForAfisha(ctx, since, filter)
 		if err != nil {
 			// Считать «сколько всего» и «отдать страницу» — разные запросы, и
 			// отказ первого не повод прятать второй: берём хотя бы то, что
@@ -158,6 +215,19 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	result.All = MergePage(pages, limit, offset)
 	result.Total += extraTotal
 	result.Degraded = degraded
+	if !filter.IsEmpty() {
+		// Закрепление — свойство доски города, а не раздела. Общий стор его
+		// уже не отдал (см. Repository.List), но источники о featured вообще
+		// ничего не знают, и правило должно держаться в одном месте.
+		result.Featured = []PublicEvent{}
+	}
+	if result.Total > maxWindow {
+		if sec := time.Now().Unix(); sec-overWindowLoggedAt.Load() > 60 {
+			overWindowLoggedAt.Store(sec)
+			log.Printf("events.List: доска переросла окно листания — total=%d при maxWindow=%d: события за окном недостижимы из интерфейса, окно пора поднимать",
+				result.Total, maxWindow)
+		}
+	}
 
 	// Деградированный ответ НЕ кэшируем. Иначе разовая икота одного стора
 	// замерзает в редисе на минуту и раздаётся всем — включая те секунды,
@@ -168,6 +238,105 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		h.cache.SetList(ctx, key, result, 60*time.Second)
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// Facets — счётчики доски под текущим фильтром: сколько в каждом разделе,
+// сколько сегодня/завтра/на выходных, сколько бесплатных, сколько по городам.
+//
+// Число рядом с плиткой — обещание: столько карточек откроется по клику.
+// Держится оно тем, что список и счётчики строятся ОДНИМИ выражениями (см.
+// StoreSQL и CountFacets), а каждое измерение считается с прочими условиями
+// фильтра, но без своего собственного — иначе на странице «завтра» все
+// остальные дни показали бы ноль и человек решил бы, что событий нет.
+//
+// Ответ намеренно НЕ кэшируется: считающие запросы дешёвые (сотни строк), а
+// кэш фасетов потребовал бы своего ключа и своей инвалидации рядом с
+// ключом списка — двух кэшей одной ленты, которые расходятся первыми.
+func (h *Handler) Facets(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	filter, err := ParseFilter(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	filter.At = time.Now()
+	since := filter.At.Add(-24 * time.Hour)
+
+	agg := NewFacets()
+	degraded := []string{}
+	answered := 0
+	if main, err := h.repo.Facets(ctx, since, filter); err != nil {
+		log.Printf("events.Facets: %v", err)
+		degraded = append(degraded, "main")
+	} else {
+		agg.Merge(main)
+		answered++
+	}
+	for _, src := range h.extra {
+		name := sourceName(src)
+		part, err := src.FacetsForAfisha(ctx, since, filter)
+		if err != nil {
+			log.Printf("events.Facets: источник %s: %v", name, err)
+			degraded = append(degraded, name)
+			continue
+		}
+		agg.Merge(part)
+		answered++
+	}
+	// Молчат все — отказ. Молчит один — числа занижены, и об этом сказано в
+	// degraded: заниженное число выглядит достоверным, отличить его от
+	// честного нечем.
+	if answered == 0 {
+		writeError(w, http.StatusInternalServerError, "facets failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, facetsResponse(filter, agg, degraded))
+}
+
+// categoryOrder — канонический порядок словаря ленты. Нужен тай-брейком:
+// при равных счётчиках плитки иначе переставлялись бы между запросами, и
+// человек читал бы это как «страница дёргается».
+var categoryOrder = func() map[string]int {
+	m := make(map[string]int, len(FeedCategories))
+	for i, c := range FeedCategories {
+		m[c] = i
+	}
+	return m
+}()
+
+func facetsResponse(f Filter, agg Facets, degraded []string) FacetsResponse {
+	cities := make([]CityCount, 0, len(Cities()))
+	for _, c := range Cities() {
+		cities = append(cities, CityCount{City: c, Count: agg.Cities[c.Slug]})
+	}
+	// Только непустые разделы: плитка с нулём — это тупик, по которому
+	// человек кликает и получает пустой экран.
+	cats := make([]CategoryCount, 0, len(agg.Categories))
+	for code, n := range agg.Categories {
+		if n <= 0 {
+			continue
+		}
+		cats = append(cats, CategoryCount{Code: code, Count: n})
+	}
+	sort.SliceStable(cats, func(i, j int) bool {
+		if cats[i].Count != cats[j].Count {
+			return cats[i].Count > cats[j].Count
+		}
+		return categoryOrder[cats[i].Code] < categoryOrder[cats[j].Code]
+	})
+	when := make(map[string]int, len(WhenCodes))
+	for _, code := range WhenCodes {
+		when[code] = agg.When[code]
+	}
+	return FacetsResponse{
+		City:       f.City,
+		Cities:     cities,
+		Total:      agg.Total,
+		Categories: cats,
+		When:       when,
+		Free:       agg.Free,
+		Degraded:   degraded,
+	}
 }
 
 func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) {

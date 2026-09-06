@@ -10,6 +10,8 @@
 		routeURL,
 		type WebregField
 	} from '$lib/webreg';
+	import { eventJsonLd, eventUrl, jsonLdScript } from '$lib/seo';
+	import type { PublicEvent } from '$lib/types';
 
 	let { data, form } = $props();
 
@@ -164,6 +166,60 @@
 		event.tagline || `${when}${venue.name ? ` · ${venue.name}` : ''}`
 	);
 
+	// Канонический адрес страницы.
+	//
+	// Она отдаётся с ДВУХ хостов: vshage.app/e/<slug> — ссылка, которую шлют в
+	// личку, afisha.vshage.app/e/<slug> — тот же адрес на поддомене афиши. Для
+	// робота это две страницы с одинаковым текстом, и без канонического он
+	// делит вес между ними. Называем адрес афиши — тот же, что печатают карта
+	// сайта и карточка /<id>: разъехаться они не могут, все трое зовут eventUrl.
+	const canonicalOrigin = $derived(data.afishaOrigin || page.url.origin);
+	const canonical = $derived(
+		eventUrl(canonicalOrigin, { id: event.slug, webreg_slug: event.slug })
+	);
+
+	// WebregEvent → форма, которую принимает eventJsonLd.
+	//
+	// Приведение живёт ЗДЕСЬ, а не правкой lib/seo.ts: разметка одного события
+	// обязана быть одинаковой на обеих поверхностях, значит функция должна
+	// остаться одна. Поля повторяют маппер fromWebreg из
+	// routes/[id]/+page.server.ts — карточка афиши и эта страница описывают
+	// одно событие и не имеют права утверждать про него разное.
+	const ldEvent = $derived<PublicEvent>({
+		id: event.slug,
+		webreg_slug: event.slug,
+		title: event.title,
+		short_description: event.tagline,
+		description: event.description,
+		start_time: event.starts_at,
+		end_time: event.ends_at,
+		// У веб-регистрации время всегда настоящее: организатор задаёт его в
+		// форме, «только дата» здесь невозможна.
+		start_time_known: true,
+		tags: [],
+		attendee_count: event.registered_count,
+		max_attendees: event.capacity,
+		photo_url: event.cover_url,
+		status: 'published',
+		registration_mode: 'external',
+		// Абсолютный, а не «/e/<slug>» как в fromWebreg: адрес внутри разметки
+		// читает робот, а не браузер, и относительный ему разрешать нечем.
+		external_registration_url: canonical,
+		// Запись через нашу форму денег не берёт — платёжного шага в
+		// веб-регистрации нет вовсе. Ровно это же говорит карточка афиши.
+		price_type: 'free',
+		currency: 'RUB',
+		venue_name: venue.name,
+		address: venue.address,
+		venue_lat: venue.lat,
+		venue_lon: venue.lon,
+		online_url: venue.online_url,
+		is_featured: false,
+		organizer_name: event.organizer_title,
+		photos: []
+	});
+	const eventLd = $derived(jsonLdScript(eventJsonLd(ldEvent, canonicalOrigin)));
+
 	const handleRegister: SubmitFunction = () => {
 		submitting = true;
 		return async ({ update }) => {
@@ -203,13 +259,29 @@
 <svelte:head>
 	<title>{event.title} · Вшаге</title>
 	<meta name="description" content={shareDescription} />
-	<meta property="og:type" content="website" />
+	<link rel="canonical" href={canonical} />
+	<meta property="og:type" content="article" />
 	<meta property="og:title" content={event.title} />
 	<meta property="og:description" content={shareDescription} />
 	<meta property="og:url" content={page.url.href} />
 	{#if ogImage}
 		<meta property="og:image" content={ogImage} />
 		<meta name="twitter:card" content="summary_large_image" />
+	{/if}
+	{#if data.done}
+		<!-- Экран «ты в списке» персональный, и в адресе у него едет КОД
+		     БИЛЕТА (?t=…). Проиндексированный такой адрес — это выданный
+		     билет в поиске; заголовок no-store от индексации не защищает,
+		     он про кэш. Канонический выше при этом остаётся: он называет
+		     чистый адрес события, куда вес и должен уйти. -->
+		<meta name="robots" content="noindex" />
+	{:else}
+		<!-- schema.org/Event. На этой странице разметка нужна ровно так же,
+		     как на карточке афиши: у события веб-регистрации канонический
+		     адрес — именно /e/<slug>, то есть в выдачу попадёт она.
+		     Экранирование делает jsonLdScript; повторно обрабатывать нельзя,
+		     вторая обработка испортит JSON. -->
+		{@html `<script type="application/ld+json">${eventLd}<\/script>`}
 	{/if}
 </svelte:head>
 

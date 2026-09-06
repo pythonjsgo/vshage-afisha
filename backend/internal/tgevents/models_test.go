@@ -3,6 +3,8 @@ package tgevents
 import (
 	"strings"
 	"testing"
+
+	"github.com/pythonjsgo/vshage-afisha/internal/events"
 )
 
 func validCard() Card {
@@ -96,9 +98,9 @@ func TestValidateAcceptsEveryFeedCategory(t *testing.T) {
 			t.Errorf("код словаря %q отклонён: %v", code, err)
 		}
 	}
-	if len(feedCategories) != 17 {
+	if len(events.FeedCategories) != 17 {
 		t.Errorf("в словаре %d кодов, в ленте 0.7 их 17 — списки разъехались",
-			len(feedCategories))
+			len(events.FeedCategories))
 	}
 }
 
