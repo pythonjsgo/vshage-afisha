@@ -2,6 +2,7 @@
   import type { PublicEvent } from '$lib/types';
   import { formatEventDate, formatEndDate } from '$lib/dateFormat';
   import MetaPill from './MetaPill.svelte';
+  import { categoryLabel } from '$lib/taxonomy';
 
   let { event }: { event: PublicEvent } = $props();
   // События веб-регистрации адресуются слагом, а не uuid. Ведём на карточку
@@ -9,10 +10,21 @@
   // это за событие, и уже оттуда — записываться (директива 17.08).
   const href = $derived(event.webreg_slug ? `/${event.webreg_slug}` : `/${event.id}`);
   const cancelled = $derived(event.status === 'cancelled');
-  const category = $derived(event.category?.toUpperCase() ?? '');
+  // Подпись рубрики — ТОЛЬКО через словарь. Печатать `event.category` как
+  // есть значило бы вывести на экран код (`CAMPUS`, `THEATRE_CINEMA`) — ровно
+  // та ловушка, что уже была с `feed.category.campus` в ленте приложения.
+  // Кода вне словаря не бывает (бэкенд его не принимает), но если он всё же
+  // приедет — чип не рисуется вовсе: пусто честнее идентификатора.
+  const category = $derived(categoryLabel(event.category)?.toUpperCase() ?? '');
   const imported = $derived(event.source === 'tg');
-  // У импортированных студсобытий рубрики нет, зато есть уровень доступа —
-  // человеку до клика важнее знать, пустят ли его, чем что это «событие».
+  const restrictedAccess = $derived(
+    event.access_level === 'university' || event.access_level === 'invite'
+  );
+  // Уровень доступа. С 06.09 у импортированных карточек есть и рубрика, но
+  // приоритет остаётся за доступом, когда он ОГРАНИЧЕН: человеку до клика
+  // важнее знать, пустят ли его, чем что это «кампус». (Прежде здесь стояло
+  // «у импортированных рубрики нет» — это перестало быть правдой в тот
+  // момент, когда категория поехала наружу из tgevents.)
   const accessLabel = $derived(
     event.access_level === 'university' ? 'ДЛЯ СТУДЕНТОВ'
     : event.access_level === 'invite' ? 'ПО ПРИГЛАШЕНИЮ'
@@ -35,6 +47,8 @@
     <div class="top">
       {#if cancelled}
         <MetaPill text="Отменено" variant="warning" />
+      {:else if restrictedAccess}
+        <MetaPill text={accessLabel} />
       {:else if category}
         <MetaPill text={category} />
       {:else if accessLabel}

@@ -153,7 +153,7 @@ describe('plural — окончание считается, а не прикле
    ───────────────────────────────────────────────────────────────────────── */
 
 import { mskDate } from './seo';
-import { ALL_SECTIONS, sectionBySlug } from './taxonomy';
+import { ALL_SECTIONS, sectionBySlug, categoryLabel } from './taxonomy';
 
 describe('eventJsonLd — онлайн размечается своим типом места', () => {
   // Пометить событие онлайновым, оставив физический Place, — невалидная
@@ -281,5 +281,21 @@ describe('eventJsonLd — сортировочный сдвиг не уезжа�
   it('у нашего события конец остаётся моментом', () => {
     const n = eventJsonLd(ev({ end_time: '2026-09-12T22:00:00+03:00' }), ORIGIN) as any;
     expect(n.endDate).toBe('2026-09-12T22:00:00+03:00');
+  });
+});
+
+describe('categoryLabel — на экран не попадает код словаря', () => {
+  // Регрессия 06.09: карточка печатала `event.category.toUpperCase()`, и как
+  // только категория поехала наружу из tgevents, на чипе появилось «CAMPUS».
+  // Тот же класс, что сырой ключ `feed.category.campus` в ленте приложения.
+  it('код превращается в человеческую подпись', () => {
+    expect(categoryLabel('campus')).toBe('Кампус');
+    expect(categoryLabel('theatre_cinema')).toBe('Театр и кино');
+  });
+
+  it('неизвестный код не подписывается вовсе — пусто честнее идентификатора', () => {
+    expect(categoryLabel('meetup')).toBeUndefined();
+    expect(categoryLabel('')).toBeUndefined();
+    expect(categoryLabel(null)).toBeUndefined();
   });
 });
