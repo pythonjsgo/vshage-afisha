@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PublicEvent } from '$lib/types';
-  import { formatEventDate, formatEndDate } from '$lib/dateFormat';
+  import { formatWhen } from '$lib/dateFormat';
   import MetaPill from './MetaPill.svelte';
   import { categoryLabel } from '$lib/taxonomy';
 
@@ -17,6 +17,12 @@
   // приедет — чип не рисуется вовсе: пусто честнее идентификатора.
   const category = $derived(categoryLabel(event.category)?.toUpperCase() ?? '');
   const imported = $derived(event.source === 'tg');
+  // Подпись «когда» целиком собирает formatWhen: у точечного события это дата
+  // со временем, у идущей программы — «до когда», у периода впереди — диапазон.
+  // Двух отдельных кусков (дата начала + «до …») здесь больше нет: у идущей
+  // выставки датой начала стояла дата ПОСТА, и карточка биеннале, работающей с
+  // марта, честно писала «5 СЕН · до 30 НОЯ» — то есть врала о начале.
+  const when = $derived(formatWhen(event));
   const restrictedAccess = $derived(
     event.access_level === 'university' || event.access_level === 'invite'
   );
@@ -57,10 +63,7 @@
     </div>
     <h3>{event.title}</h3>
     <div class="meta">
-      <span class="date">
-        {formatEventDate(event.start_time, new Date(), event.start_time_known !== false)}
-        {#if event.end_time}<span class="until">· {formatEndDate(event.end_time)}</span>{/if}
-      </span>
+      <span class="date" class:urgent={when.urgent}>{when.text}</span>
       {#if event.attendee_count > 0}
         <span class="att">· {event.attendee_count} идут</span>
       {/if}
@@ -122,9 +125,11 @@
   }
   .meta { font-size: 11px; color: var(--mute); }
   .date { color: var(--accent-green); }
-  /* Конец многодневной программы — тише даты начала: это уточнение, а не
-     вторая дата. */
-  .until { opacity: 0.65; }
+  /* «ПОСЛЕДНИЙ ДЕНЬ» и «ОСТАЛОСЬ 2 ДНЯ» — единственные подписи, где от чтения
+     зависит, успеет человек или нет. Розовым в этой теме подсвечено только
+     то, что требует действия сейчас; сделать таким же обычную дату значило бы
+     обесценить сам сигнал. */
+  .date.urgent { color: var(--accent-pink); }
   .org {
     font-size: 10px;
     color: var(--mute);

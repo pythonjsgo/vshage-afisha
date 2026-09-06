@@ -50,8 +50,26 @@ var afishaStore = events.StoreSQL{
 // Условие — publish_afisha, а не registration_open: событие, у которого
 // кончились места, всё ещё происходит в городе, и снятие его с доски в
 // момент заполнения прячет ровно те события, ради которых на доску и заходят.
+//
+// «Ещё не прошло» меряется по КОНЦУ, а не по началу (правка 07.09). Пока
+// мерялось по началу, конференция, идущая с прошлой недели, отсутствовала на
+// доске вовсе — не была спрятана фильтром, а не существовала для него, — и
+// полоса «идёт сейчас» не могла получить из этого стора ни одной строки.
+// Обещание показать идущее, которое стор структурно не в состоянии выполнить,
+// хуже отсутствующей полосы.
 func afishaBase(since string) string {
-	return "publish_afisha AND starts_at >= " + since
+	return "publish_afisha AND COALESCE(ends_at, starts_at) >= " + since
+}
+
+// afishaOrder — порядок списка. Полоса «идёт сейчас» отвечает на «успею ли»:
+// сверху то, что закрывается раньше. Порядок обязан совпасть с ключом слияния
+// (events.MergePage) — окно [offset, offset+limit) честно ровно потому, что
+// каждый источник отдал свои первые offset+limit строк по ТОМУ ЖЕ ключу.
+func afishaOrder(f events.Filter) string {
+	if f.Kind == events.KindRunning {
+		return "COALESCE(ends_at, starts_at) ASC, e.slug"
+	}
+	return "starts_at ASC"
 }
 
 func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time, f events.Filter, limit, offset int) ([]events.PublicEvent, error) {
@@ -77,7 +95,7 @@ func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time, f e
 		       (SELECT COUNT(*) FROM webreg_registrations rg WHERE rg.event_slug = e.slug)
 		FROM webreg_events e
 		WHERE `+base+` AND (`+where+`)
-		ORDER BY starts_at ASC
+		ORDER BY `+afishaOrder(f)+`
 		LIMIT `+a.Add(limit)+` OFFSET `+a.Add(offset), a.All()...)
 	if err != nil {
 		return nil, err
@@ -132,6 +150,11 @@ func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time, f e
 			ev.Address = &venue.Address
 			ev.Location = &venue.Address
 		}
+		// Последней строкой и ровно тем же правилом, что у двух других сторов:
+		// полоса — свойство события, а не источника. Момент берётся из фильтра
+		// запроса, чтобы все три стора разбивали ленту относительно одного
+		// «сегодня»; в полночь свои time.Now() разъехались бы на день.
+		ev.Classify(f.Now())
 		out = append(out, ev)
 	}
 	return out, rows.Err()

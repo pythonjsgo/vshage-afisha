@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { eventJsonLd, jsonLdScript, eventUrl, eventsCount } from './seo';
+import { eventJsonLd, jsonLdScript, eventUrl, eventsCount, listingMeta } from './seo';
+import type { City } from './seo';
 import { plural } from './taxonomy';
 import type { PublicEvent } from './types';
 
@@ -25,6 +26,8 @@ import type { PublicEvent } from './types';
  */
 
 const ORIGIN = 'https://afisha.vshage.app';
+/** Город приезжает с бэкенда падежами — здесь он ровно такой же. */
+const qMSK: City = { slug: 'msk', name: 'Москва', in: 'в Москве', of: 'Москвы' };
 
 /** Минимальное событие доски; каждый тест дописывает только то, что мерит. */
 function ev(over: Partial<PublicEvent> = {}): PublicEvent {
@@ -297,5 +300,34 @@ describe('categoryLabel — на экран не попадает код сло�
     expect(categoryLabel('meetup')).toBeUndefined();
     expect(categoryLabel('')).toBeUndefined();
     expect(categoryLabel(null)).toBeUndefined();
+  });
+});
+
+describe('listingMeta — полоса не уезжает в канонический адрес', () => {
+  // Полоса это ПАРАМЕТР, а не сегмент пути. Дописать `?kind=` в canonical
+  // значило бы объявить роботу две почти одинаковые страницы вместо одной и
+  // поделить между ними вес — а поймать это можно только по выдаче месяцы
+  // спустя: сайт при этом отвечает 200, разметка валидна.
+  const qBase = { origin: ORIGIN, city: qMSK, total: 260 };
+
+  it('обе полосы канонизируются одним адресом доски', () => {
+    const both = listingMeta({ ...qBase });
+    const running = listingMeta({ ...qBase, kind: 'running' });
+    const timed = listingMeta({ ...qBase, kind: 'timed' });
+    expect(both.canonical).toBe(`${ORIGIN}/msk`);
+    expect(running.canonical).toBe(both.canonical);
+    expect(timed.canonical).toBe(both.canonical);
+  });
+
+  it('в разделе — тем же правилом', () => {
+    const m = listingMeta({ ...qBase, sectionSlug: 'exhibition', kind: 'running' });
+    expect(m.canonical).toBe(`${ORIGIN}/msk/exhibition`);
+    expect(m.canonical).not.toContain('kind');
+  });
+
+  // Описание относится к каноническому адресу, а он у полос общий: число в
+  // нём обязано быть про обе полосы, и считает его загрузчик страницы.
+  it('число в описании — то, что дали, и полоса его не подменяет', () => {
+    expect(listingMeta({ ...qBase, kind: 'running' }).description).toContain('260 событий');
   });
 });

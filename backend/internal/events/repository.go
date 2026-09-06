@@ -76,7 +76,16 @@ const (
 // было три (закреплённое, список, счётчик), они держались; с фасетами их
 // стало бы шесть, а расходятся такие копии тихо: подпись «показано N из M»
 // врёт ровно на разницу между предикатом списка и предикатом счётчика.
-const boardBase = `e.status = 'published' AND e.start_time >= $1 AND ` + visibleOnBoard
+//
+// «Не старше суток» меряется по КОНЦУ события, а не по началу (правка 07.09).
+// Пока мерялось по началу, программа, идущая с прошлой недели, отсутствовала
+// на доске вовсе — не была спрятана фильтром, а не существовала для него, — и
+// полоса «идёт сейчас» не могла получить из этого стора ни одной строки.
+// Обещание показать идущее, которое стор структурно не в состоянии выполнить,
+// хуже отсутствующей полосы. Затронуто 0 строк на DEV и на PROD (замер 07.09):
+// проверить это живой базой нельзя, поэтому проверяется фикстурой
+// (TestИдущееМногодневноеВидноОбщимСтором).
+const boardBase = `e.status = 'published' AND COALESCE(e.end_time, e.start_time) >= $1 AND ` + visibleOnBoard
 
 // boardCountFrom — минимальный FROM для счётчиков: только таблицы, на которые
 // смотрят условия фильтра. Профили и провайдеры нужны карточке, а не счёту.
@@ -92,9 +101,29 @@ var mainStore = StoreSQL{
 	// «Бесплатно» не попадает: неизвестная цена — не бесплатная. Прежде здесь
 	// стояло COALESCE(d.price_type,'free') — зеркало такой же подстановки в
 	// selectCols; убраны обе разом, иначе раздел и карточка разошлись бы.
-	Free: "d.price_type = 'free'",
+	Free:  "d.price_type = 'free'",
 	Start: "e.start_time",
 	End:   "COALESCE(e.end_time, e.start_time)",
+}
+
+// boardOrder — порядок списка. Полоса «идёт сейчас» отвечает на вопрос
+// «успею ли», поэтому сверху то, что закрывается раньше; у всего остального
+// вопрос прежний — «когда», и порядок по началу.
+//
+// Порядок обязан совпасть с ключом слияния (events.MergePage): окно
+// [offset, offset+limit) честно ровно потому, что каждый источник отдал свои
+// первые offset+limit строк по ТОМУ ЖЕ ключу. Разойдись они — страница
+// потеряла бы карточки и выглядела бы полной.
+//
+// Тай-брейк по id добавлен только у порядка по концу: у идущих программ конец
+// часто общий (все закрываются 30 сентября), и без него Postgres волен
+// переставлять их между запросами, а слияние в Go тай-брейк уже делает — то
+// есть два порядка расходились бы на равных ключах.
+func boardOrder(f Filter) string {
+	if f.Kind == KindRunning {
+		return "COALESCE(e.end_time, e.start_time) ASC, e.id"
+	}
+	return "e.start_time ASC"
 }
 
 // Joins referenced by selectCols. Used by every SELECT in this file.
@@ -119,15 +148,26 @@ func (r *Repository) List(ctx context.Context, q ListQuery) (ListResult, error) 
 	// концерт в шапке страницы «Выставки» — это ложь, причём убедительная,
 	// она стоит первой. Поэтому при непустом фильтре список закреплённого
 	// пуст, и запрос за ним даже не делается.
+	//
+	// ПОЛОСА из фильтра закреплённого ВЫЧИТАЕТСЯ — по той же причине, по
+	// которой её нет в IsEmpty: закрепление принадлежит доске города целиком,
+	// а не полосе. Главная просит основную ленту как `kind=timed`; оставь
+	// полосу в этом запросе — и закреплённая ИДУЩАЯ программа вылетела бы из
+	// шапки. Сегодня этого не видно ничем: на проде закреплено точечное
+	// событие, и разница появится ровно в тот день, когда куратор закрепит
+	// выставку, — то есть молча и не сразу.
+	now := q.Filter.Now()
 	featured := []PublicEvent{}
 	if q.Filter.IsEmpty() {
+		pinned := q.Filter
+		pinned.Kind = ""
 		a := NewSQLArgs(since)
 		var err error
-		featured, err = r.query(ctx, `
+		featured, err = r.query(ctx, now, `
 			SELECT `+selectCols+selectFrom+`
 			INNER JOIN afisha_featured f ON f.event_id = e.id
 			WHERE `+boardBase+`
-			  AND (`+mainStore.Where(q.Filter, a)+`)
+			  AND (`+mainStore.Where(pinned, a)+`)
 			ORDER BY f.position ASC, e.start_time ASC
 			LIMIT 10
 		`, a.All()...)
@@ -151,12 +191,12 @@ func (r *Repository) List(ctx context.Context, q ListQuery) (ListResult, error) 
 	// двенадцать это остаток страницы, а не число событий раздела.
 	aList := NewSQLArgs(since)
 	whereList := mainStore.Where(q.Filter, aList)
-	all, err := r.query(ctx, `
+	all, err := r.query(ctx, now, `
 		SELECT `+selectCols+selectFrom+`
 		LEFT JOIN afisha_featured f ON f.event_id = e.id
 		WHERE `+boardBase+`
 		  AND (`+whereList+`)
-		ORDER BY e.start_time ASC
+		ORDER BY `+boardOrder(q.Filter)+`
 		LIMIT `+aList.Add(limit)+` OFFSET `+aList.Add(q.Offset), aList.All()...)
 	if err != nil {
 		return ListResult{}, err
@@ -196,7 +236,7 @@ func (r *Repository) Facets(ctx context.Context, since time.Time, f Filter) (Fac
 	}, f)
 }
 
-func (r *Repository) GetByID(ctx context.Context, id string) (*PublicEvent, error) {
+func (r *Repository) GetByID(ctx context.Context, id string, now time.Time) (*PublicEvent, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT `+selectCols+selectFrom+`
 		LEFT JOIN afisha_featured f ON f.event_id = e.id
@@ -223,6 +263,15 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*PublicEvent, erro
 		&ev.RegForm, &ev.RegFields); err != nil {
 		return nil, err
 	}
+	// Карточка события классифицируется ТОЖЕ: подпись даты на детальной
+	// странице рисуется той же функцией, что и на плитке (formatWhen), и без
+	// Kind она печатала бы «12 СЕН» у выставки, идущей до конца месяца.
+	//
+	// Момент приходит аргументом, а не читается здесь: тем же моментом хендлер
+	// строит ключ кэша карточки (см. eventCacheKey). Свои часы означали бы, что
+	// карточка легла под ключ одного дня с полосой другого, если между двумя
+	// вызовами прошла полночь.
+	ev.Classify(now)
 	return &ev, nil
 }
 
@@ -423,7 +472,11 @@ func (r *Repository) RegisterPublic(ctx context.Context, eventID string, input P
 	return &PublicRegistrationResult{RegistrationID: registrationID, EventID: eventID, Status: status}, nil
 }
 
-func (r *Repository) query(ctx context.Context, sql string, args ...any) ([]PublicEvent, error) {
+// query — единственный маппер списков общего стора. `now` берётся из фильтра
+// запроса, а не из time.Now() здесь: полоса решается относительно одного
+// момента на все три стора, иначе в полночь они разъедутся на день — редко,
+// зато молча и вразнобой.
+func (r *Repository) query(ctx context.Context, now time.Time, sql string, args ...any) ([]PublicEvent, error) {
 	rows, err := r.pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
@@ -446,6 +499,7 @@ func (r *Repository) query(ctx context.Context, sql string, args ...any) ([]Publ
 			}
 			return nil, err
 		}
+		ev.Classify(now)
 		out = append(out, ev)
 	}
 	return out, rows.Err()

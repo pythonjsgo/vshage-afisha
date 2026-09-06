@@ -16,7 +16,10 @@ import (
 // уедет за обращение к кэшу, тест упадёт паникой, и это правильный сигнал.
 func TestListRefusesUnknownFilterBeforeTouchingAnything(t *testing.T) {
 	h := NewHandler(nil, nil)
-	for _, query := range []string{"?category=koncert", "?when=tonight", "?city=spb", "?free=true"} {
+	for _, query := range []string{"?category=koncert", "?when=tonight", "?city=spb", "?free=true",
+		// Полоса — тот же случай: сброшенная молча, она отдаёт полную доску с
+		// кодом 200 и честной подписью, и опечатку в адресе нечем заметить.
+		"?kind=runing", "?kind=all"} {
 		req := httptest.NewRequest(http.MethodGet, "/api/events"+query, nil)
 		w := httptest.NewRecorder()
 		h.List(w, req)
@@ -35,11 +38,13 @@ func TestListRefusesUnknownFilterBeforeTouchingAnything(t *testing.T) {
 
 func TestFacetsRefusesUnknownFilter(t *testing.T) {
 	h := NewHandler(nil, nil)
-	req := httptest.NewRequest(http.MethodGet, "/api/events/facets?category=koncert", nil)
-	w := httptest.NewRecorder()
-	h.Facets(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("код %d, ожидали 400", w.Code)
+	for _, query := range []string{"?category=koncert", "?kind=runing"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/events/facets"+query, nil)
+		w := httptest.NewRecorder()
+		h.Facets(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("%s: код %d, ожидали 400", query, w.Code)
+		}
 	}
 }
 

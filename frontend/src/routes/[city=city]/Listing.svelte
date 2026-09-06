@@ -3,6 +3,7 @@
   import EventGrid from '$lib/components/EventGrid.svelte';
   import CategoryTiles from '$lib/components/CategoryTiles.svelte';
   import FilterRow from '$lib/components/FilterRow.svelte';
+  import KindChips from '$lib/components/KindChips.svelte';
   import CityPicker from '$lib/components/CityPicker.svelte';
   import type { PublicEvent } from '$lib/types';
   import type { Section } from '$lib/taxonomy';
@@ -13,6 +14,7 @@
     queryForSection,
     PAGE_SIZE,
     MAX_WINDOW,
+    type EventKind,
     type Facets
   } from '$lib/api';
 
@@ -22,9 +24,14 @@
     facets,
     countsTrusted = true,
     section,
+    kind,
     featured,
     events,
     total,
+    running,
+    laneSplit,
+    laneCounts,
+    grandTotal,
     meta,
     crumbs
   }: {
@@ -36,10 +43,50 @@
     countsTrusted?: boolean;
     /** null на главной города. */
     section: Section | null;
+    /** Выбранная полоса; null — показаны обе. */
+    kind: EventKind | null;
     featured: PublicEvent[];
-    /** Первая порция, отрисованная на сервере. */
+    /** Первая порция ОСНОВНОЙ полосы, отрисованная на сервере. */
     events: PublicEvent[];
+    /** total основной полосы. */
     total: number;
+    /**
+     * Вторая полоса — превью идущего, только при `kind === null`.
+     *
+     * `null` означает и «полосы нет по построению» (выбрана одна), и «список
+     * идущих не ответил». Разница между ними в лог уже записана загрузчиком, а
+     * на экране она одна и та же: второй сетки нет. Ронять доску города из-за
+     * превью двенадцати карточек было бы хуже того отказа, ради которого
+     * заведён 503.
+     */
+    running: { events: PublicEvent[]; total: number } | null;
+    /**
+     * Бэкенд действительно разложил доску по полосам.
+     *
+     * false бывает ровно в одном случае — фронт выкатился раньше бэкенда, и
+     * старый `kind` игнорирует, отдавая на любой запрос ОДНУ И ТУ ЖЕ доску.
+     * Тогда полос не существует, и весь их интерфейс гасится: переключатель
+     * не рисуется, метка сетки возвращается к дововолновой «СОБЫТИЯ». Окно
+     * между двумя выкатками — минута, но доска публичная, а отказ немой:
+     * код 200, карточки настоящие, в логах ни строки.
+     */
+    laneSplit: boolean;
+    /**
+     * Числа на пилюлях переключателя — тоталы полос ЭТОЙ страницы.
+     *
+     * `null` — чисел нет (спрошена одна полоса, вторая не ответила, источник
+     * молчал): ряд рисуется без цифр. Считает их загрузчик, а не пилюли из
+     * фасетов: фасеты просятся без фильтра раздела, и их разрез по полосам —
+     * число ГОРОДА, тогда как пилюля ведёт в РАЗДЕЛ. Так «ИДЁТ СЕЙЧАС · 88» на
+     * `/msk/concert` открывало пустую сетку.
+     */
+    laneCounts: { timed: number; running: number } | null;
+    /**
+     * Сколько всего на доске/в разделе ОБЕИМИ полосами. Заголовок и подпись
+     * считаются от него, а не от полосы: «Афиша Москвы · 8 событий» на
+     * `?kind=running` было бы неправдой о городе, а не о полосе.
+     */
+    grandTotal: number;
     meta: MetaTags;
     /** Путь, не абсолютный адрес: ссылка обязана остаться своей по протоколу. */
     crumbs: { name: string; path: string }[];
@@ -66,13 +113,60 @@
   const capped = $derived(items.length >= MAX_WINDOW && items.length < known);
   const canLoadMore = $derived(!stalled && !capped && items.length < known);
 
-  const gridLabel = $derived(
-    items.length < known
-      ? `СОБЫТИЯ · ${items.length} ИЗ ${known}`
-      : `ВСЕ СОБЫТИЯ · ${known}`
+  /** Адрес текущего раздела без параметров — от него строятся ссылки полос. */
+  const basePath = $derived(section ? `/${city.slug}/${section.slug}` : `/${city.slug}`);
+
+  const KIND_LABEL: Record<EventKind, string> = {
+    timed: 'ПО ДАТЕ И ВРЕМЕНИ',
+    running: 'ИДЁТ СЕЙЧАС'
+  };
+  // Подпись полосы — ТОЛЬКО через словарь. Напечатать здесь сам код (`running`)
+  // значило бы вывести на экран идентификатор — ровно та ошибка, что уже дважды
+  // доезжала до людей («feed.category.campus» в ленте и сырое «CAMPUS» на
+  // карточке афиши), и оба раза её поймал глазами человек, а не прибор.
+  // При `kind === null` основная полоса — «по дате и времени» по построению.
+  //
+  // Без раскладки полос сетку подписывает дововолновая «СОБЫТИЯ»: старый
+  // бэкенд на `?kind=running` отдаёт доску целиком, и метка «ИДЁТ СЕЙЧАС ·
+  // 260» над ней утверждала бы, что весь город — идущие программы. Ссылкой
+  // сюда уже не попасть (переключатель погашен), но адрес с параметром живёт
+  // у того, кто нажал пилюлю до отката бэкенда, — а подпись обязана быть
+  // верной и по ссылке из чужого чата.
+  const mainLabel = $derived(laneSplit ? KIND_LABEL[kind ?? 'timed'] : 'СОБЫТИЯ');
+
+  /**
+   * Число рядом с меткой обязано совпадать с тем, что на экране.
+   *
+   * «N ИЗ M», пока полоса дорисована не до конца, и одно M, когда всё видно.
+   * Написать сразу M над сотней карточек из ста пятидесяти мы уже пробовали:
+   * подпись «СОБЫТИЯ · 90 ИЗ 150» была ЕДИНСТВЕННЫМ признаком того, что
+   * пятьдесят событий недостижимы из интерфейса, и прочитал её фаундер, а не
+   * прибор.
+   */
+  function laneLabel(base: string, shown: number, all: number): string {
+    return shown < all ? `${base} · ${shown} ИЗ ${all}` : `${base} · ${all}`;
+  }
+
+  const gridLabel = $derived(laneLabel(mainLabel, items.length, known));
+
+  /** Вторая полоса рисуется, только когда в ней есть что показать. */
+  const hasRunning = $derived(!!running && running.events.length > 0);
+  const runningLabel = $derived(
+    running ? laneLabel(KIND_LABEL.running, running.events.length, running.total) : ''
+  );
+  // «ВСЕ 88 →» — только когда превью действительно короче полосы. Ссылка «все»
+  // над полным списком обещает продолжение, которого нет.
+  const runningMore = $derived(
+    running && running.events.length < running.total
+      ? { href: `${basePath}?kind=running`, text: `ВСЕ ${running.total} →` }
+      : null
   );
 
-  const itemListLd = $derived(jsonLdScript(itemListJsonLd(items, origin)));
+  // Разметка для поисковика описывает ТО, ЧТО НА СТРАНИЦЕ, — значит обе полосы.
+  // Оставить здесь одну основную значило бы отдать роботу список короче
+  // видимого, причём на каноническом адресе, где полос как раз две.
+  const ldItems = $derived(hasRunning && running ? [...items, ...running.events] : items);
+  const itemListLd = $derived(jsonLdScript(itemListJsonLd(ldItems, origin)));
   // В разметке для поисковика адреса обязаны быть абсолютными, а в href —
   // относительными: абсолютный href, собранный из origin, на стенде без
   // явного ORIGIN уехал бы на http и уводил бы человека с https по клику.
@@ -94,6 +188,11 @@
     try {
       const res = await getEvents(fetch, {
         ...queryForSection(city.slug, section),
+        // «Показать ещё» листает ТОЛЬКО основную полосу — и на двухполосной
+        // странице тоже. Без явного kind сервер отдал бы обе полосы вперемешку,
+        // и в конец списка «по дате и времени» посыпались бы идущие выставки,
+        // которые под этой меткой стоять не должны.
+        kind: kind ?? 'timed',
         limit: PAGE_SIZE,
         offset: items.length
       });
@@ -169,7 +268,7 @@
   <div class="head">
     <h1>{heading}</h1>
     <p class="sub">
-      {eventsCount(known)}{#if section}&nbsp;· {section.blurb}{/if}
+      {eventsCount(grandTotal)}{#if section}&nbsp;· {section.blurb}{/if}
     </p>
   </div>
 
@@ -195,7 +294,20 @@
     activeSlug={section && section.kind !== 'category' ? section.slug : null}
   />
 
-  <EventGrid events={items} label={gridLabel} />
+  {#if laneSplit}
+    <KindChips
+      showCounts={countsTrusted}
+      {basePath}
+      counts={laneCounts}
+      active={kind}
+    />
+  {/if}
+
+  <EventGrid
+    events={items}
+    label={gridLabel}
+    emptyText={hasRunning ? null : 'ПОКА ПУСТО · ЗАГЛЯНИ ЗАВТРА'}
+  />
 
   {#if canLoadMore}
     <button class="more" onclick={loadMore} disabled={loading}>
@@ -217,6 +329,14 @@
       Показаны первые {items.length} из {known}. Глубже лента не листается —
       выберите раздел выше, там событий меньше и они точнее.
     </p>
+  {/if}
+
+  <!-- Вторая полоса стоит ПОСЛЕ кнопки «показать ещё»: кнопка листает первую,
+       и поставить её между двумя сетками значило бы предложить дозагрузить
+       то, что нарисовано ниже. Идущее показано превью — вглубь человек уходит
+       ссылкой «все», а не листанием. -->
+  {#if hasRunning && running}
+    <EventGrid events={running.events} label={runningLabel} more={runningMore} />
   {/if}
 </main>
 

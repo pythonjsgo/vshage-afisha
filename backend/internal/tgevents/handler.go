@@ -40,7 +40,7 @@ func NewHandler(repo *Repository, adminToken string) *Handler {
 // payload с чужим текстом поста, и один невнимательный маршалинг сделал бы
 // его публичным.
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
-	ev, err := h.repo.GetByID(r.Context(), chi.URLParam(r, "id"))
+	ev, err := h.repo.GetByID(r.Context(), chi.URLParam(r, "id"), time.Now())
 	if errors.Is(err, ErrNotFound) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return

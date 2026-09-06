@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { PublicEvent } from '$lib/types';
-  import { formatEventDateLong, formatEndDate } from '$lib/dateFormat';
+  import { formatEventDateLong, formatEndDate, formatWhen } from '$lib/dateFormat';
+  import { categoryLabel } from '$lib/taxonomy';
   import MetaPill from './MetaPill.svelte';
   import GlitchText from './GlitchText.svelte';
   import ShareSheet from './ShareSheet.svelte';
@@ -11,7 +12,23 @@
   let { event, origin }: { event: PublicEvent; origin: string } = $props();
   const url = $derived(`${origin}/${event.id}`);
   const cancelled = $derived(event.status === 'cancelled');
-  const category = $derived(event.category?.toUpperCase() ?? '');
+  // Подпись рубрики — ТОЛЬКО через словарь. Здесь печатался сам код, и с 07.09,
+  // когда категория поехала наружу из tgevents, на карточке появилось сырое
+  // «CAMPUS» / «THEATRE_CINEMA». Кода вне словаря быть не должно, но если он
+  // приедет — чип не рисуется вовсе: пусто честнее идентификатора.
+  const category = $derived(categoryLabel(event.category)?.toUpperCase() ?? '');
+  /**
+   * Подпись «когда» у длящейся программы собирает formatWhen: «ИДЁТ ДО 20 СЕН»,
+   * «ПОСЛЕДНИЙ ДЕНЬ», «28 СЕН — 3 ОКТ», «ИДЁТ ПОСТОЯННО». Дата начала у идущей
+   * НЕ печатается: в базе там чаще дата поста, а не открытия (у биеннале,
+   * работающей с марта, стоит 5 сентября).
+   *
+   * Точечное событие остаётся на прежней длинной подписи. Относительное
+   * «СЕГОДНЯ В 19:00», которое отдаёт formatWhen, годится карточке в ленте, но
+   * в строке «КОГДА» человек ищет именно календарную дату — её он переписывает
+   * себе в календарь.
+   */
+  const when = $derived(event.multiday ? formatWhen(event).text : '');
   const externalRegistration = $derived(event.registration_mode === 'external' && event.external_registration_url);
   // Импортированное студсобытие. Признак ЯВНЫЙ (source), а не «есть
   // source_url»: то поле nullable, и карточка без него превратилась бы в
@@ -46,8 +63,12 @@
 
   <section class="info">
     <div class="row"><div class="k">КОГДА</div><div class="v">
-      {formatEventDateLong(event.start_time, event.start_time_known !== false)}
-      {#if event.end_time}<br />{formatEndDate(event.end_time)}{/if}
+      {#if when}
+        {when}
+      {:else}
+        {formatEventDateLong(event.start_time, event.start_time_known !== false)}
+        {#if event.end_time}<br />{formatEndDate(event.end_time)}{/if}
+      {/if}
     </div></div>
     {#if event.location}
       <div class="row"><div class="k">ГДЕ</div><div class="v">{event.location}</div></div>

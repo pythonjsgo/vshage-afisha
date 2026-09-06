@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { sectionBySlug } from '$lib/taxonomy';
-import { loadListing } from '../listing';
+import { kindFromSearch, loadListing } from '../listing';
 
 export const load: PageServerLoad = async ({ params, fetch, url, setHeaders }) => {
 	const section = sectionBySlug(params.section);
@@ -15,7 +15,11 @@ export const load: PageServerLoad = async ({ params, fetch, url, setHeaders }) =
 		fetch,
 		origin: url.origin,
 		citySlug: params.city,
-		section
+		section,
+		// Разбор полосы — общий с доской города (см. listing.ts): две копии
+		// одного правила на двух маршрутах расходятся молча, и разойтись они
+		// успевают раньше, чем кто-нибудь это заметит.
+		kind: kindFromSearch(url.searchParams)
 	});
 	setHeaders({ 'Cache-Control': 'public, max-age=30, stale-while-revalidate=300' });
 	return data;

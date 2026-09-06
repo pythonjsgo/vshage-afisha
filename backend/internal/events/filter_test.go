@@ -3,6 +3,7 @@ package events
 import (
 	"encoding/json"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,14 @@ func TestParseFilterRefusesUnknownValues(t *testing.T) {
 		"when=today2",
 		"free=true",
 		"free=yes",
+		// Полоса — тот же случай, и соблазн сбросить её молча тут особенно
+		// велик: обе полосы это же полная доска, вреда вроде нет. Вред тот
+		// же — 200, полная лента, честная подпись и опечатка в адресе,
+		// которую нечем заметить.
+		"kind=runing",
+		"kind=Running", // регистр значим, как и у категории
+		"kind=all",
+		"kind=1",
 	} {
 		q, err := url.ParseQuery(raw)
 		if err != nil {
@@ -72,9 +81,36 @@ func TestParseFilterRefusesUnknownValues(t *testing.T) {
 // «ключа нет» и «ключ пустой», и разное поведение у соседних параметров
 // пришлось бы держать в голове каждому, кто собирает адрес руками.
 func TestEmptyParameterMeansNotGiven(t *testing.T) {
-	f := mustParse(t, "city=&category=&when=&free=")
-	if f.City.Slug != DefaultCitySlug || f.Category != "" || f.When != "" || f.Free {
+	f := mustParse(t, "city=&category=&when=&free=&kind=")
+	if f.City.Slug != DefaultCitySlug || f.Category != "" || f.When != "" || f.Kind != "" || f.Free {
 		t.Errorf("пустые параметры дали фильтр %+v", f)
+	}
+}
+
+// Полоса разбирается — и РАЗДЕЛОМ доски НЕ считается (правка 07.09).
+//
+// Полоса того же класса, что город: это вид на ту же доску, а не другая
+// доска. Главная просит основную ленту как `kind=timed`, поэтому полоса в
+// IsEmpty означала бы «закреплённого на главной больше нет» — молча, при
+// живом закреплении в базе. Закреплённое на полосе, которую выбрал человек,
+// гасит фронт одним условием в загрузчике.
+func TestParseFilterПринимаетОбеПолосы(t *testing.T) {
+	for _, code := range KindCodes {
+		f := mustParse(t, "kind="+code)
+		if f.Kind != code {
+			t.Errorf("полоса %q не доехала до фильтра", code)
+		}
+		if !f.IsEmpty() {
+			t.Errorf("фильтр с полосой %q считается разделом — закреплённое исчезнет с главной, которая просит kind=timed", code)
+		}
+	}
+	if len(KindCodes) != 2 || KindCodes[0] != KindTimed || KindCodes[1] != KindRunning {
+		t.Errorf("порядок показа полос %v — ожидали «по дате и времени» первой", KindCodes)
+	}
+	// Раздел разделом остаётся: полоса вместе с категорией — это всё ещё
+	// раздел, и закреплённое там показывать нельзя.
+	if f := mustParse(t, "kind=running&category=exhibition"); f.IsEmpty() {
+		t.Error("полоса вместе с категорией прочитана как пустой фильтр")
 	}
 }
 
@@ -191,6 +227,79 @@ func TestWhenFiltersByIntervalNotBySortKey(t *testing.T) {
 	}
 }
 
+// «По дате и времени» — это ОТРИЦАНИЕ «идёт сейчас», а не второй набор
+// сравнений. Два независимо написанных условия — ровно тот случай, когда
+// карточка не подходит ни под одно и не показывается НИГДЕ: обе полосы
+// выглядят исправными, доска тихо теряет события, и заметить это можно только
+// пересчитав её руками.
+func TestПолосыРазбиваютДоскуБезЩелей(t *testing.T) {
+	now := mskDate(2026, 9, 7, 12)
+	for _, s := range []StoreSQL{
+		mainStore,
+		{Start: "date", End: "COALESCE(date_end, date)", Dates: true},
+	} {
+		ar, at := NewSQLArgs(), NewSQLArgs()
+		running := s.KindCond(KindRunning, now, ar)
+		timed := s.KindCond(KindTimed, now, at)
+		if timed != "NOT "+running {
+			t.Errorf("Dates=%v: timed = %q, а running = %q — это не отрицание", s.Dates, timed, running)
+		}
+		if len(ar.All()) != len(at.All()) {
+			t.Errorf("Dates=%v: полосы заняли разное число аргументов", s.Dates)
+		}
+		// Обе границы — один и тот же день: «началось раньше него» и
+		// «кончается не раньше него». Разные значения дали бы окно, в которое
+		// событие может не попасть ни с одной стороны.
+		args := ar.All()
+		if len(args) != 2 {
+			t.Fatalf("Dates=%v: аргументов %d, ожидали два конца сравнения: %v", s.Dates, len(args), args)
+		}
+		if args[0] != args[1] {
+			t.Errorf("Dates=%v: границы полосы %v и %v — это разные дни", s.Dates, args[0], args[1])
+		}
+		if s.Dates && args[0] != "2026-09-07" {
+			t.Errorf("день полосы %v, ожидали 2026-09-07 (МСК)", args[0])
+		}
+		if !s.Dates {
+			if ts, ok := args[0].(time.Time); !ok || ts.Format("2006-01-02 15:04") != "2026-09-07 00:00" {
+				t.Errorf("день полосы %v, ожидали начало 07.09 по МСК", args[0])
+			}
+		}
+	}
+
+	// Полоса не задана — условия нет вовсе, и аргументов оно не занимает.
+	a := NewSQLArgs()
+	if got := mainStore.KindCond("", now, a); got != "TRUE" {
+		t.Errorf("пустая полоса дала %q", got)
+	}
+	if n := len(a.All()); n != 0 {
+		t.Errorf("пустая полоса заняла %d аргументов", n)
+	}
+}
+
+// Полоса обязана доехать до SQL так же, как остальные условия. Забытый
+// конъюнкт в Where — это `?kind=running`, который отдаёт полную доску: 200,
+// карточки есть, счётчик сходится сам с собой.
+func TestWhereНесётПолосу(t *testing.T) {
+	now := mskDate(2026, 9, 7, 12)
+	plain := NewSQLArgs("since")
+	withKind := NewSQLArgs("since")
+	base := mainStore.Where(Filter{City: DefaultCity(), At: now}, plain)
+	kinded := mainStore.Where(Filter{City: DefaultCity(), Kind: KindRunning, At: now}, withKind)
+	if base == kinded {
+		t.Fatalf("Where с полосой и без неё дал один текст — условие полосы не доехало: %s", base)
+	}
+	if !strings.Contains(kinded, "e.start_time <") ||
+		!strings.Contains(kinded, "COALESCE(e.end_time, e.start_time) >=") {
+		t.Errorf("условие полосы не похоже на сравнение начала и конца с сегодняшним днём: %s", kinded)
+	}
+	// Два аргумента сверх базового — оба конца сравнения. Забытый аргумент
+	// сдвинул бы нумерацию и подставил дату туда, где ждали лимит.
+	if got, want := len(withKind.All()), len(plain.All())+2; got != want {
+		t.Errorf("полоса заняла %d аргументов вместо %d", got-len(plain.All()), want-len(plain.All()))
+	}
+}
+
 // Ключ кэша обязан различать ВСЕ параметры фильтра. Пока он был
 // `<limit>:<offset>`, страница раздела получила бы закэшированную полную
 // ленту — 200, карточки есть, просто чужие, и на минуту одинаково у всех.
@@ -210,6 +319,8 @@ func TestCacheKeySeparatesEveryFilter(t *testing.T) {
 		"завтра":      Filter{City: DefaultCity(), When: WhenTomorrow, At: now}.CacheKey(30, 0),
 		"выходные":    Filter{City: DefaultCity(), When: WhenWeekend, At: now}.CacheKey(30, 0),
 		"бесплатно":   Filter{City: DefaultCity(), Free: true, At: now}.CacheKey(30, 0),
+		"идёт сейчас": Filter{City: DefaultCity(), Kind: KindRunning, At: now}.CacheKey(30, 0),
+		"по дате":     Filter{City: DefaultCity(), Kind: KindTimed, At: now}.CacheKey(30, 0),
 	}
 	seen := map[string]string{}
 	for name, key := range variants {
@@ -225,6 +336,19 @@ func TestCacheKeySeparatesEveryFilter(t *testing.T) {
 	tomorrow := Filter{City: DefaultCity(), When: WhenToday, At: now.AddDate(0, 0, 1)}
 	if today.CacheKey(30, 0) == tomorrow.CacheKey(30, 0) {
 		t.Error("«сегодня» вчера и сегодня делят запись кэша — после полуночи лента отдаст вчерашний день")
+	}
+
+	// У полосы та же беда, и она злее: `kind=running` — это «началось ДО
+	// сегодня», то есть в полночь меняется состав ВСЕЙ полосы разом, а не
+	// одного ведра. Без даты в ключе первая минута суток раздавала бы
+	// вчерашнее разбиение всем, кто открыл доску, и все шестьдесят секунд оно
+	// выглядело бы совершенно достоверно.
+	for _, code := range KindCodes {
+		before := Filter{City: DefaultCity(), Kind: code, At: now}
+		after := Filter{City: DefaultCity(), Kind: code, At: now.AddDate(0, 0, 1)}
+		if before.CacheKey(30, 0) == after.CacheKey(30, 0) {
+			t.Errorf("полоса %q делит запись кэша через полночь — состав полосы меняется, ключ нет", code)
+		}
 	}
 }
 
@@ -322,6 +446,7 @@ func TestFacetsResponseShapeMatchesTheContract(t *testing.T) {
 	agg.Categories["campus"] = 0 // пустой раздел — плитка-тупик, не показываем
 	agg.When[WhenToday] = 42
 	agg.Cities[DefaultCitySlug] = 417
+	agg.Kind[KindRunning] = 88
 
 	raw, err := json.Marshal(facetsResponse(Filter{City: DefaultCity()}, agg, nil))
 	if err != nil {
@@ -331,7 +456,7 @@ func TestFacetsResponseShapeMatchesTheContract(t *testing.T) {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"city", "cities", "total", "categories", "when", "free"} {
+	for _, key := range []string{"city", "cities", "total", "categories", "when", "kind", "free"} {
 		if _, ok := got[key]; !ok {
 			t.Errorf("в ответе нет поля %q", key)
 		}
@@ -374,6 +499,24 @@ func TestFacetsResponseShapeMatchesTheContract(t *testing.T) {
 	if len(when) != len(WhenCodes) {
 		t.Errorf("вёдер «когда» %d, ожидали %d — переключатель не нарисуется целиком", len(when), len(WhenCodes))
 	}
+
+	// Полосы всегда обе, даже нулевые — в отличие от плиток разделов. Пилюля
+	// раздела с нулём это тупик, который лучше не показывать; пилюля полосы —
+	// переключатель из двух положений, и пропавшая половина читается как
+	// «полос нет», а не как «в этой полосе пусто».
+	var kind map[string]int
+	if err := json.Unmarshal(got["kind"], &kind); err != nil {
+		t.Fatal(err)
+	}
+	if len(kind) != len(KindCodes) {
+		t.Errorf("полос в ответе %d, ожидали %d — переключатель не нарисуется целиком", len(kind), len(KindCodes))
+	}
+	if kind[KindRunning] != 88 {
+		t.Errorf("«идёт сейчас» = %d, ожидали 88", kind[KindRunning])
+	}
+	if n, ok := kind[KindTimed]; !ok || n != 0 {
+		t.Errorf("пустая полоса «по дате» пропала из ответа (%v, %v)", n, ok)
+	}
 }
 
 // Ключ обязан быть КАНОНИЧЕСКИМ: один и тот же запрос, записанный по-разному,
@@ -402,6 +545,75 @@ func TestCacheKeyIsCanonical(t *testing.T) {
 		}
 		if key != first {
 			t.Errorf("«%s» и «%s» дали разные ключи:\n  %s\n  %s", firstRaw, raw, first, key)
+		}
+	}
+}
+
+// Ключ карточки обязан различать дни, как и ключ списка: полоса `kind`
+// считается относительно «сегодня», а запись живёт пять минут и полночь
+// переживает. Карточка, положенная в 23:58 с полосой «по дате и времени», до
+// 00:03 отдавалась бы уже наступившим сегодня с прежней полосой.
+func TestКлючКарточкиРазличаетДни(t *testing.T) {
+	late := time.Date(2026, 9, 7, 23, 58, 0, 0, mskZone)
+	past := late.Add(5 * time.Minute) // 00:03 следующих суток по МСК
+
+	if eventCacheKey("ev_x", late) == eventCacheKey("ev_x", past) {
+		t.Error("карточка делит запись кэша через полночь — полоса отдастся вчерашняя")
+	}
+	// Внутри одних суток ключ обязан быть ОДИН, иначе кэш просто не работает:
+	// каждый запрос промахивается, и это видно только по числу промахов.
+	morning := time.Date(2026, 9, 7, 9, 0, 0, 0, mskZone)
+	if eventCacheKey("ev_x", morning) != eventCacheKey("ev_x", late) {
+		t.Error("в пределах суток ключ карточки разный — кэш промахивается всегда")
+	}
+	// День считается по МСК, а контейнер живёт в UTC: в 01:30 МСК UTC-дата
+	// ещё вчерашняя, и ключ разъехался бы с ключом списка ровно на те три
+	// часа, ради которых mskToday и существует.
+	nightMSK := time.Date(2026, 9, 6, 22, 30, 0, 0, time.UTC) // 07.09 01:30 МСК
+	if eventCacheKey("ev_x", nightMSK) != eventCacheKey("ev_x", morning) {
+		t.Error("ключ карточки взял день по UTC, а не по МСК")
+	}
+	// Разные события не делят запись — контроль на случай, если из ключа
+	// однажды выпадет id и все карточки станут одной.
+	if eventCacheKey("ev_x", morning) == eventCacheKey("ev_y", morning) {
+		t.Error("две разные карточки делят запись кэша")
+	}
+}
+
+// Ключ карточки строит РОВНО ОДНА функция. Обращений к нему три — чтение,
+// запись и сброс после регистрации, — и склейка на месте в третьем из них
+// была бы самым тихим из возможных отказов: сброс удалял бы ключ, которого
+// нет, и карточка держала бы устаревший счётчик записавшихся все пять минут.
+// Ровно так это и было написано до 07.09.
+func TestОдинСтроительКлючаКарточки(t *testing.T) {
+	for _, name := range []string{"cache.go", "handler.go"} {
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body strings.Builder
+		for _, line := range strings.Split(string(src), "\n") {
+			trimmed := strings.TrimSpace(line)
+			// Комментарии обоих видов — прочь: префикс ключа назван и в
+			// объяснениях рядом, и прибор краснел бы на объяснении.
+			if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "--") {
+				continue
+			}
+			body.WriteString(line)
+			body.WriteString("\n")
+		}
+		// Игла — префикс с ОТКРЫВАЮЩЕЙ кавычкой и без закрывающей:
+		// `"afisha:events:` матчит и `"afisha:events:"`, и
+		// `"afisha:events:v2:"`. Подъём версии ключа — законная правка, и
+		// ломать на ней прибор нельзя; а вот вторая склейка где угодно ещё
+		// обязана его ломать, и с такой иглой она ломает.
+		got := strings.Count(body.String(), `"afisha:events:`)
+		want := 0
+		if name == "cache.go" {
+			want = 1 // единственное вхождение — внутри eventCacheKey
+		}
+		if got != want {
+			t.Errorf("%s: префикс ключа карточки встречается %d раз, ожидали %d — ключ строится не одной функцией", name, got, want)
 		}
 	}
 }

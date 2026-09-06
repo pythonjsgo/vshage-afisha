@@ -278,9 +278,12 @@ func (r *Repository) SourceEvents(ctx context.Context, key string, limit int) ([
 	}
 	// «Сегодня» по МСК и параметром — как в List: CURRENT_DATE в контейнере
 	// это UTC, и с полуночи до трёх ночи он другой день.
-	today := time.Now().In(msk).Format(dateLayout)
+	now := time.Now()
+	today := now.In(msk).Format(dateLayout)
+	// Порядок по началу: страница источника — это срез общей витрины без
+	// полосы, и вопрос к ней тот же, что и к доске, — «когда».
 	rows, err := r.pool.Query(ctx, selectCard+`
-		WHERE NOT hidden AND source_key = $2 AND COALESCE(date_end, date) >= $1`+orderCard+`
+		WHERE NOT hidden AND source_key = $2 AND COALESCE(date_end, date) >= $1`+orderCard(false)+`
 		LIMIT $3`, today, key, limit)
 	if err != nil {
 		return nil, err
@@ -293,7 +296,7 @@ func (r *Repository) SourceEvents(ctx context.Context, key string, limit int) ([
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, toPublic(row))
+		out = append(out, toPublic(row, now))
 	}
 	return out, rows.Err()
 }

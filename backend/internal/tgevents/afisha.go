@@ -75,7 +75,25 @@ const selectCard = `
 // COALESCE(eff_time, ...) — внутри выражения он ищет колонку таблицы и падает
 // с `column "eff_time" does not exist`. Повторить CASE в ORDER BY значило бы
 // снова завести второе определение сдвига, которое уже дважды разъезжалось.
-const orderCard = `) t ORDER BY eff_date, COALESCE(eff_time, '00:00'), id`
+//
+// byEnd — порядок полосы «идёт сейчас»: сверху то, что закрывается раньше.
+// Сентинел «бессрочно» (`date_end = 9999-01-01`) уезжает в конец сам, без
+// спецслучая, — ровно там ему и место: программа без конца отвечает на «успею
+// ли» словом «всегда».
+func orderCard(byEnd bool) string {
+	if byEnd {
+		return `) t ORDER BY COALESCE(de, d), id`
+	}
+	return `) t ORDER BY eff_date, COALESCE(eff_time, '00:00'), id`
+}
+
+// openEndedFrom — с какой даты `date_end` перестаёт быть датой и означает
+// «конца нет». Сентинел ставит конвейер (vshage-geo/collect), и чинить его
+// надо там; здесь он ПЕРЕВОДИТСЯ в признак, потому что «до 1 ЯНВ» на карточке
+// — это ложь о чужом событии, сказанная от нашего имени. Порог годом, а не
+// точным значением: сентинелы имеют свойство размножаться (9999-01-01,
+// 9999-12-31, 2999-…), и признак должен пережить следующий.
+const openEndedFrom = "2100-01-01"
 
 // afishaStore — какими колонками витрина tg отвечает на вопросы фильтра
 // ленты (см. events.StoreSQL). Одно описание на список, счётчик и фасеты:
@@ -119,7 +137,15 @@ func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time, f e
 	day := since.In(msk).Format(dateLayout)
 	// «Сегодня» считаем по МСК и передаём параметром: CURRENT_DATE в
 	// контейнере — UTC, и с полуночи до трёх ночи это другой день.
-	today := time.Now().In(msk).Format(dateLayout)
+	//
+	// Момент берётся ИЗ ФИЛЬТРА, а не своими часами. Хендлер ставит
+	// `filter.At = time.Now()` один раз на запрос ровно затем, чтобы три стора
+	// ленты не разрешили «сегодня» в разные дни; второй вызов часов внутри
+	// стора возвращает ту самую гонку, ради которой поле At и заведено. Она
+	// редкая (окно — миллисекунды вокруг полуночи МСК) и потому особенно
+	// неприятная: сдвиг eff_date разъедется со сдвигом соседнего стора, и
+	// лента один раз в сутки перетасуется без всякого следа в логах.
+	today := f.Now().In(msk).Format(dateLayout)
 
 	// Фильтр уезжает В SQL. Отсев в Go после выборки дал бы разделу обрезки
 	// уже нарезанного окна: окно режется до фильтра, и «показать ещё»
@@ -128,7 +154,7 @@ func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time, f e
 	base := afishaBase(a.Add(day))
 	where := afishaStore.Where(f, a)
 	rows, err := r.pool.Query(ctx, selectCard+`
-		WHERE `+base+` AND (`+where+`)`+orderCard+`
+		WHERE `+base+` AND (`+where+`)`+orderCard(f.Kind == events.KindRunning)+`
 		LIMIT `+a.Add(limit)+` OFFSET `+a.Add(offset), a.All()...)
 	if err != nil {
 		return nil, err
@@ -141,7 +167,7 @@ func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time, f e
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, toPublic(row))
+		out = append(out, toPublic(row, f.Now()))
 	}
 	return out, rows.Err()
 }
@@ -181,11 +207,15 @@ func (r *Repository) AfishaSourceName() string { return "tg" }
 // GetByID — одиночная карточка для страницы события. Без неё каждая карточка
 // в ленте вела бы в 404: id вида ev_* уходил бы во фронте в /api/e/<slug> как
 // слаг веб-регистрации (это и было третьим препятствием 23.08).
-// GetByID — одиночная карточка для страницы события. Без неё каждая карточка
-// в ленте вела бы в 404: id вида ev_* уходил бы во фронте в /api/e/<slug> как
-// слаг веб-регистрации (это и было третьим препятствием 23.08).
-func (r *Repository) GetByID(ctx context.Context, id string) (events.PublicEvent, error) {
-	today := time.Now().In(msk).Format(dateLayout)
+//
+// `now` приходит аргументом, а не читается здесь, и часов внутри метода нет
+// вовсе. Раньше их было ДВА — один на сдвиг eff_date в запросе, второй на
+// Classify, — и между ними могла пройти полночь: карточка получила бы дату
+// показа одного дня и полосу другого. Плюс аргумент делает метод проверяемым
+// в фиксированный момент, а с внутренними часами «эта программа идёт 8-го»
+// написать тестом нельзя вообще.
+func (r *Repository) GetByID(ctx context.Context, id string, now time.Time) (events.PublicEvent, error) {
+	today := now.In(msk).Format(dateLayout)
 	rows, err := r.pool.Query(ctx, selectCard+`
 		WHERE id = $2 AND NOT hidden) t`, today, id)
 	if err != nil {
@@ -203,7 +233,7 @@ func (r *Repository) GetByID(ctx context.Context, id string) (events.PublicEvent
 	if err != nil {
 		return events.PublicEvent{}, err
 	}
-	return toPublic(row), rows.Err()
+	return toPublic(row, now), rows.Err()
 }
 
 type scanner interface {
@@ -310,7 +340,11 @@ func venueCoord(v any, limit float64) *float64 {
 // посчитан в SQL (selectCard) и приезжает готовым, потому что тем же
 // выражением сортируется выборка. Считать его в двух местах уже пробовали —
 // разошлись дважды.
-func toPublic(row cardRow) events.PublicEvent {
+//
+// `now` приходит аргументом, а не берётся здесь: полоса (events.Classify)
+// решается относительно ОДНОГО момента на все три стора ленты, иначе в полночь
+// они разъедутся на день.
+func toPublic(row cardRow, now time.Time) events.PublicEvent {
 	c, e, hasCover := row.Card, row.Eff, row.HasCover
 	start := parseMSK(e.Date, e.Time)
 	timeKnown := e.Time != nil && *e.Time != ""
@@ -340,10 +374,23 @@ func toPublic(row cardRow) events.PublicEvent {
 		ev.ActualStartDate = &actual
 	}
 	if c.DateEnd != nil && *c.DateEnd != "" && *c.DateEnd != c.Date {
-		// Конец многодневной программы — конец её последнего дня, иначе
-		// выставка «до 20 сентября» исчезала бы из ленты утром 20-го.
-		end := parseMSK(*c.DateEnd, nil).Add(23*time.Hour + 59*time.Minute)
-		ev.EndTime = &end
+		switch {
+		case *c.DateEnd >= openEndedFrom:
+			// Сентинел «конца нет». EndTime НЕ ставим вовсе: карточка с ним
+			// рисовала бы «до 1 ЯНВ» (замер 07.09: три такие на DEV и три на
+			// PROD), и это утверждение о чужом событии, которого никто не
+			// делал. Отсутствие поля читается верно всеми потребителями —
+			// и подписью на плитке, и schema.org, — а признак `open_ended`
+			// говорит ровно то, что мы знаем: конца в анонсе не было.
+			// Сравнение строк, а не дат: обе стороны — YYYY-MM-DD, и в этом
+			// формате лексикографический порядок совпадает с календарным.
+			ev.OpenEnded = true
+		default:
+			// Конец многодневной программы — конец её последнего дня, иначе
+			// выставка «до 20 сентября» исчезала бы из ленты утром 20-го.
+			end := parseMSK(*c.DateEnd, nil).Add(23*time.Hour + 59*time.Minute)
+			ev.EndTime = &end
+		}
 	}
 	if hasCover {
 		// Свой origin, не CDN телеги: тот протухает за дни (замер 23.08).
@@ -380,6 +427,10 @@ func toPublic(row cardRow) events.PublicEvent {
 	// заводить всем источникам, у которых его нет.
 	g := parseVenue(row.Venue)
 	ev.VenueLat, ev.VenueLon, ev.VenueMetro = g.Lat, g.Lon, g.Metro
+	// Последней строкой и ровно тем же правилом, что у двух других сторов:
+	// полоса — свойство события, а не источника. Здесь оно обязано стоять
+	// ПОСЛЕ ActualStartDate и OpenEnded — Classify читает оба.
+	ev.Classify(now)
 	return ev
 }
 

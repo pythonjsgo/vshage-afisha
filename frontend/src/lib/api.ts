@@ -54,6 +54,27 @@ export const PAGE_SIZE = 100;
 export const MAX_WINDOW = 1000;
 
 /**
+ * Полоса доски. Разбиение полное и непересекающееся: каждое событие ровно в
+ * одной полосе, и решает это сервер (`kind` в ответе), а не фронт.
+ *
+ * `running` — многодневная программа, которая уже открылась и ещё не
+ * закрылась; `timed` — всё остальное, то есть точечные события и периоды,
+ * которые ещё не начались.
+ */
+export type EventKind = 'running' | 'timed';
+
+/**
+ * Сколько идущих программ показывается на двухполосной странице.
+ *
+ * Это ПРЕВЬЮ, а не порция листания: полоса «идёт сейчас» на доске города —
+ * приглашение зайти в неё целиком (`?kind=running`), а не второй список на
+ * сто карточек. Двенадцать — три ряда сетки на широком экране; больше
+ * отодвинуло бы вниз ту самую ленту по дате и времени, ради которой полосы и
+ * разводились.
+ */
+export const RUNNING_PREVIEW = 12;
+
+/**
  * Отказ API вместе с кодом.
  *
  * Код нужен вызывающему: 400 от списка означает, что словарь разделов на
@@ -76,6 +97,12 @@ export interface EventsQuery {
 	when?: string;
 	/** Только '1' — так у бэкенда. */
 	free?: string;
+	/**
+	 * Полоса. Не задана — обе вместе, как было до появления полос. В запрос
+	 * уезжает ТОЛЬКО когда задана: пустой `kind=` бэкенд читает как «не
+	 * задан», но лишний параметр разводит ключ кэша и адрес «показать ещё».
+	 */
+	kind?: EventKind;
 	limit?: number;
 	offset?: number;
 }
@@ -101,6 +128,7 @@ export function eventsSearch(q: EventsQuery): URLSearchParams {
 	if (q.category) p.set('category', q.category);
 	if (q.when) p.set('when', q.when);
 	if (q.free) p.set('free', q.free);
+	if (q.kind) p.set('kind', q.kind);
 	const offset = Math.max(0, Math.trunc(q.offset ?? 0));
 	const limit = Math.max(1, Math.min(Math.trunc(q.limit ?? PAGE_SIZE), MAX_WINDOW - offset));
 	if (offset > 0) p.set('offset', String(offset));
@@ -137,6 +165,16 @@ export interface WhenFacets {
 	weekend: number;
 }
 
+/**
+ * Сколько событий в каждой полосе. Считается со всеми прочими условиями
+ * фильтра, но БЕЗ своего собственного — иначе на `?kind=running` вторая
+ * пилюля показала бы ноль и выглядела бы пустым разделом.
+ */
+export interface KindFacets {
+	running: number;
+	timed: number;
+}
+
 export interface Facets {
 	city: City;
 	cities: City[];
@@ -144,6 +182,15 @@ export interface Facets {
 	/** Только count > 0, по убыванию count — пустые рубрики бэкенд не шлёт. */
 	categories: CategoryFacet[];
 	when: WhenFacets;
+	/**
+	 * Разрез по полосам. Необязателен НАМЕРЕННО, и подставлять вместо него нули
+	 * нельзя: его отсутствие — единственный признак того, что бэкенд полос ещё
+	 * не знает. Нули означают ровно противоположное — бэкенд полосы посчитал, и
+	 * в них сейчас пусто. Разбор, стирающий это различие, гасит переключатель на
+	 * совершенно исправном стенде с пустой полосой, то есть отбирает дорогу
+	 * обратно ровно там, где она нужна. Тот же приём, что уже взят у `degraded`.
+	 */
+	kind?: KindFacets;
 	free: number;
 	/**
 	 * Источники ленты, которые не ответили при подсчёте. Непустой массив
@@ -171,6 +218,15 @@ function normalizeFacets(raw: unknown, citySlug: string): Facets {
 		? o.categories.filter((c) => c && typeof c.code === 'string' && c.count > 0)
 		: [];
 	const when = o.when ?? { today: 0, tomorrow: 0, weekend: 0 };
+	// Разрез по полосам приезжает с бэкенда этой же волны, а фронт умеет
+	// оказаться старше или новее его на один деплой. Отсутствие ключа
+	// СОХРАНЯЕТСЯ: по нему страница отличает «бэкенд полос не знает» от
+	// «полосы посчитаны, и в одной из них пусто». Разбор внутри ключа остаётся
+	// терпимым — половина разреза это половина разреза.
+	const kind =
+		o.kind && typeof o.kind === 'object'
+			? { running: o.kind.running ?? 0, timed: o.kind.timed ?? 0 }
+			: undefined;
 	return {
 		city,
 		cities,
@@ -182,6 +238,7 @@ function normalizeFacets(raw: unknown, citySlug: string): Facets {
 			tomorrow: when.tomorrow ?? 0,
 			weekend: when.weekend ?? 0
 		},
+		kind,
 		free: typeof o.free === 'number' ? o.free : 0
 	};
 }

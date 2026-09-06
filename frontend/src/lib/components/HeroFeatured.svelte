@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PublicEvent } from '$lib/types';
-  import { formatEventDateLong } from '$lib/dateFormat';
+  import { formatWhen } from '$lib/dateFormat';
   import { onMount } from 'svelte';
   import GlitchText from './GlitchText.svelte';
 
@@ -18,6 +18,13 @@
 </script>
 
 {#if active}
+  <!-- Подпись «когда» здесь та же, что на карточках ниже, и по той же причине.
+       Прежде печаталась дата НАЧАЛА, а у закреплённой идущей программы в этом
+       поле стоит дата поста: выставка, открывшаяся в июне, объявляла себя
+       сегодняшней — тем же шрифтом в 96 пикселей, каким мы зовём человека
+       прийти. Заодно ушло выдуманное «00:00» у событий без известного времени:
+       formatEventDateLong звалась здесь без признака start_time_known. -->
+  {@const when = formatWhen(active)}
   <a class="hero" href={active.webreg_slug ? `/e/${active.webreg_slug}` : `/${active.id}`}
      style={active.photo_url ? `background-image: url(${active.photo_url})` : ''}>
     <div class="overlay"></div>
@@ -32,7 +39,7 @@
         <GlitchText text={active.title} />
       </p>
       <div class="meta">
-        <span>{formatEventDateLong(active.start_time)}</span>
+        <span class="when" class:urgent={when.urgent}>{when.text}</span>
         {#if active.location}
           <span> · {active.location}</span>
         {/if}
@@ -78,6 +85,11 @@
     letter-spacing: -2px;
   }
   .meta { font-size: 11px; letter-spacing: 1px; color: var(--mute); }
+  /* «ПОСЛЕДНИЙ ДЕНЬ» и «ОСТАЛОСЬ 2 ДНЯ» вынимаются из приглушённой строки
+     розовым — тем же, что на карточках. Закреплённая программа, которая
+     закрывается сегодня, — единственное место доски, где от прочтения этой
+     строки зависит, попадёт человек или нет. */
+  .when.urgent { color: var(--accent-pink); }
   .pager { position: absolute; bottom: var(--sp-3); left: var(--sp-5); right: var(--sp-5); display: flex; gap: var(--sp-1); z-index: 2; }
   .pager div { flex: 1; height: 2px; background: var(--border); }
   .pager div.on { background: var(--accent-pink); }

@@ -31,6 +31,27 @@ const (
 // сразу, поэтому список нужен и здесь, и в ответе.
 var WhenCodes = []string{WhenToday, WhenTomorrow, WhenWeekend}
 
+// Коды полосы доски (директива фаундера 07.09). Полос ровно две, и разбиение
+// полное: каждое событие принадлежит РОВНО ОДНОЙ.
+//
+//	running — многодневная программа, которая уже открылась и ещё не закрылась
+//	timed   — всё остальное: точечные события и периоды, ещё не начавшиеся
+//
+// Полоса заведена потому, что идущая выставка получает eff_date = сегодня и
+// eff_time = NULL → «00:00», то есть встаёт в ленте ВЫШЕ сегодняшнего концерта
+// в 19:00. На DEV это четырнадцать подряд карточек «СЕГОДНЯ» без времени
+// (замер 07.09: 88 идущих программ из 260 на доске, на PROD — 123 из 408).
+// Отсортировать это иначе нельзя: у идущей программы «когда» просто нет,
+// вопрос к ней другой — «до когда».
+const (
+	KindRunning = "running"
+	KindTimed   = "timed"
+)
+
+// KindCodes — обе полосы в порядке показа. «По дате и времени» первой:
+// точечное событие — то, ради чего на доску заходят чаще.
+var KindCodes = []string{KindTimed, KindRunning}
+
 // FeedCategories — словарь категорий ленты 0.7, дословная копия
 // network internal/feed/taxonomy.go (allCategories) в каноническом порядке.
 // Копия, а не импорт: афиша и core-api — разные сервисы в разных
@@ -92,6 +113,7 @@ type Filter struct {
 	City     City
 	Category string // код словаря ленты; пусто = все
 	When     string // today | tomorrow | weekend; пусто = все
+	Kind     string // running | timed; пусто = обе полосы
 	Free     bool
 	// At — момент, относительно которого разрешается `when`. Ставится ОДИН
 	// раз на запрос (Handler.List / Handler.Facets). Сторов у ленты три, и
@@ -146,6 +168,18 @@ func ParseFilter(q url.Values) (Filter, error) {
 		f.When = when
 	}
 
+	// Полоса разбирается тем же шаблоном, что и `when`, включая отказ на
+	// неизвестном значении. Соблазн «сбросить непонятную полосу и показать
+	// обе» тут особенно велик — обе полосы это же полная доска, вреда вроде
+	// нет. Вред тот же, что и у раздела: страница отдаёт 200 и полную ленту,
+	// подпись пишет честное число, и опечатку в адресе нечем заметить.
+	if kind := strings.TrimSpace(q.Get("kind")); kind != "" {
+		if kind != KindRunning && kind != KindTimed {
+			return Filter{}, fmt.Errorf("kind %q — не running или timed", kind)
+		}
+		f.Kind = kind
+	}
+
 	// `free` принимает ровно «1» (фильтровать) и «0» (не фильтровать).
 	// Всё остальное — отказ: `free=true` от клиента, который решил, что тут
 	// булево, иначе тихо отдал бы платные события в разделе «бесплатно».
@@ -163,6 +197,15 @@ func ParseFilter(q url.Values) (Filter, error) {
 // IsEmpty — «раздел не выбран». Город сюда НЕ входит: доска города — это и
 // есть доска, а не раздел, и закрепление на ней законно. Именно по этому
 // признаку лента решает, показывать ли featured (см. Handler.List).
+//
+// Полоса — ТОГО ЖЕ КЛАССА, что город, и тоже не входит (исправлено 07.09;
+// первая редакция контракта требовала обратного и была неправа). Полоса — не
+// раздел, а вид на ту же доску: главная просит основную ленту как
+// `kind=timed`, и с полосой в этом условии закреплённое исчезло бы с главной
+// молча — на проде оно есть, замер 07.09 дал featured 1 при total 408.
+//
+// Закреплённое на полосе, которую выбрал ЧЕЛОВЕК, не рисует фронт — одним
+// условием в загрузчике, а не лишним запросом сюда.
 func (f Filter) IsEmpty() bool {
 	return f.Category == "" && f.When == "" && !f.Free
 }
@@ -176,7 +219,10 @@ func (f Filter) IsEmpty() bool {
 //
 // Для `when` в ключ едет ещё и разрешённая дата: «сегодня», посчитанное до
 // полуночи, после полуночи означает другой день, а TTL записи переживает
-// полночь.
+// полночь. У полосы ровно та же беда, и она злее: `kind=running` — это
+// «началось ДО сегодня», то есть в полночь состав полосы меняется весь сразу,
+// а не на одно ведро. Без даты в ключе первая минута суток раздавала бы
+// вчерашнее разбиение всем, кто открыл доску.
 func (f Filter) CacheKey(limit, offset int) string {
 	free := "0"
 	if f.Free {
@@ -186,6 +232,9 @@ func (f Filter) CacheKey(limit, offset int) string {
 		":" + f.City.Slug + ":" + f.Category + ":" + f.When + ":" + free
 	if r, ok := whenRange(f.When, f.Now()); ok {
 		key += ":" + r.FirstDate() + "-" + r.LastDate()
+	}
+	if f.Kind != "" {
+		key += ":" + f.Kind + ":" + f.Now().In(mskZone).Format("2006-01-02")
 	}
 	return key
 }
@@ -207,12 +256,20 @@ func (r dayRange) LastDate() string  { return r.To.AddDate(0, 0, -1).Format("200
 // контейнере — UTC, и с полуночи до трёх ночи это вчерашний день.
 // mskZone объявлена один раз на пакет (notify.go) — второй FixedZone был бы
 // вторым определением того же, а такие расходятся первыми.
+// mskToday — начало календарного дня МСК. Одно определение на весь пакет:
+// «сегодня» спрашивают четверо (отрезок `when`, условие полосы, ключ кэша,
+// классификатор события), и четыре собственных `time.Date(...)` разошлись бы
+// первыми — причём молча и только между полуночью и тремя ночи.
+func mskToday(now time.Time) time.Time {
+	m := now.In(mskZone)
+	return time.Date(m.Year(), m.Month(), m.Day(), 0, 0, 0, 0, mskZone)
+}
+
 func whenRange(code string, now time.Time) (dayRange, bool) {
 	if code == "" {
 		return dayRange{}, false
 	}
-	msk := now.In(mskZone)
-	today := time.Date(msk.Year(), msk.Month(), msk.Day(), 0, 0, 0, 0, mskZone)
+	today := mskToday(now)
 	switch code {
 	case WhenToday:
 		return dayRange{From: today, To: today.AddDate(0, 0, 1)}, true
@@ -379,22 +436,15 @@ func (s StoreSQL) FreeCond(f Filter, a *SQLArgs) string {
 // на том же выражении, ответил бы «завтра её нет» — хотя завтра она идёт.
 // Сортировка и фильтрация — два разных вопроса, и выражения у них разные.
 //
-// ОГРАНИЧЕНИЕ, которое это условие снять не может (замер 06.09). Пересечение
-// интервалов работает целиком только у tgevents: его базовый предикат доски —
-// `COALESCE(date_end, date) >= сегодня`, то есть идущая многодневная
-// программа на доске есть. У общего стора база гейтит по НАЧАЛУ
-// (`e.start_time >= $1`, repository.go), у webreg — так же (`starts_at >=`),
-// и событие, начавшееся раньше суточного окна, отсутствует на доске вовсе;
-// до фильтра «сегодня» дело не доходит. То есть у этих двух сторов раздел
-// «Сегодня» не покажет идущую многодневную программу — не потому что условие
-// неверно, а потому что строки нет.
-//
-// Не чинится здесь намеренно: правка базы меняет СОСТАВ доски (идущее
-// событие встало бы в начало `ORDER BY start_time` и висело там до конца),
-// а это отдельное решение, а не побочный эффект фильтров. Практического
-// эффекта сегодня нет — в общем сторе одно будущее событие. Написано здесь,
-// потому что комментарий, обещающий поведение, которого два стора не дают,
-// хуже отсутствующего.
+// Ограничение, стоявшее здесь до 07.09, СНЯТО, и об этом сказано здесь, потому
+// что оставленный текст стал бы ложным обещанием наоборот. До 07.09 пересечение
+// интервалов работало целиком только у tgevents: у общего стора и webreg
+// базовый предикат гейтил по НАЧАЛУ (`e.start_time >= $1`, `starts_at >= $1`),
+// и программа, начавшаяся раньше суточного окна, отсутствовала на доске вовсе
+// — до фильтра «сегодня» дело не доходило. Теперь оба гейтят по КОНЦУ
+// (`COALESCE(end, start) >= $1`), потому что полоса «идёт сейчас» обещает
+// показать идущее, а стор, который структурно не может отдать в неё ни одной
+// строки, делает это обещание ложным молча.
 func (s StoreSQL) WhenCond(code string, now time.Time, a *SQLArgs) string {
 	r, ok := whenRange(code, now)
 	if !ok {
@@ -408,13 +458,66 @@ func (s StoreSQL) WhenCond(code string, now time.Time, a *SQLArgs) string {
 		s.End + " >= " + a.Add(r.From) + ")"
 }
 
-// Where — все четыре условия конъюнкцией. Пустой фильтр даёт TRUE, а не
+// KindCond — условие полосы: «идёт сейчас» либо «по дате и времени».
+//
+// running = начало СТРОГО раньше сегодняшнего дня И конец не раньше него.
+// Строгое «раньше» здесь не придирка: событие, начинающееся сегодня, ещё имеет
+// осмысленный ответ на вопрос «когда» — даже если оно тянется неделю, — и
+// место ему в полосе времени. Идущим оно станет завтра само.
+//
+// timed определён отрицанием, а не вторым набором сравнений: разбиение обязано
+// быть полным и непересекающимся, а два независимо написанных условия — это
+// ровно тот случай, когда карточка выпадает из обеих полос и не показывается
+// нигде. Трёхзначная логика тут не мешает: обе стороны сравнения NOT NULL
+// (начало у всех трёх сторов NOT NULL, конец обёрнут в COALESCE), поэтому
+// NOT никогда не даёт NULL и никого не теряет.
+//
+// «Сегодня» уезжает ПАРАМЕТРОМ, как и у `when`: CURRENT_DATE в контейнере —
+// UTC, и с полуночи до трёх ночи это вчерашний день, то есть вся полоса на три
+// часа в сутки съезжала бы.
+func (s StoreSQL) KindCond(kind string, now time.Time, a *SQLArgs) string {
+	if kind == "" {
+		return "TRUE"
+	}
+	var running string
+	if s.Dates {
+		// Порога длительности здесь НЕТ, и это не забывчивость. Во-первых, он
+		// не нужен: у стора на датах `date < D AND COALESCE(date_end, date) >= D`
+		// уже означает `date_end >= date + 1`, а конец карточки синтезируется
+		// как 23:59 последнего дня (tgevents.toPublic) — размах такой строки
+		// не бывает меньше суток, то есть порог она проходит всегда.
+		// Во-вторых, он тут невыразим: `date - date` в Postgres даёт integer, а
+		// не interval, и сравнение падает с `operator does not exist:
+		// integer >= interval` (проверено запросом 07.09, а не предположено).
+		day := mskToday(now).Format("2006-01-02")
+		running = "(" + s.Start + " < " + a.Add(day) + "::date AND " +
+			s.End + " >= " + a.Add(day) + "::date)"
+	} else {
+		// Третий конъюнкт — тот же порог, что и у Multiday в Classify.
+		// Без него вчерашняя вечеринка 19:00→02:00 на следующий день проходит
+		// первые два сравнения и встаёт ПЕРВОЙ в полосе «идёт сейчас» (порядок
+		// по концу возрастанием), а подпись у неё вчерашняя. Разбиение при этом
+		// остаётся полным и непересекающимся — то есть инвариант, которым мы
+		// сверяем SQL с Go, на это слеп.
+		today := mskToday(now)
+		running = "(" + s.Start + " < " + a.Add(today) + " AND " +
+			s.End + " >= " + a.Add(today) + " AND " +
+			s.End + " - " + s.Start + " >= " + multidayMinSpanSQL + ")"
+	}
+	if kind == KindRunning {
+		return running
+	}
+	return "NOT " + running
+}
+
+// Where — все пять условий конъюнкцией. Пустой фильтр даёт TRUE, а не
 // пустую строку: вызывающий всегда пишет `AND (` + Where + `)` и не может
 // забыть ветку «фильтра нет» — забытая ветка это либо синтаксис, либо, что
 // хуже, потерянное условие.
 func (s StoreSQL) Where(f Filter, a *SQLArgs) string {
 	return s.CityCond(f, a) + " AND " + s.CategoryCond(f, a) +
-		" AND " + s.WhenCond(f.When, f.Now(), a) + " AND " + s.FreeCond(f, a)
+		" AND " + s.WhenCond(f.When, f.Now(), a) + " AND " + s.FreeCond(f, a) +
+		" AND " + s.KindCond(f.Kind, f.Now(), a)
 }
 
 // Facets — счётчики одного стора под текущим фильтром. Складываются по
@@ -430,6 +533,7 @@ type Facets struct {
 	Categories map[string]int
 	When       map[string]int
 	Cities     map[string]int
+	Kind       map[string]int
 }
 
 // NewFacets — пустые счётчики с готовыми картами.
@@ -438,6 +542,7 @@ func NewFacets() Facets {
 		Categories: map[string]int{},
 		When:       map[string]int{},
 		Cities:     map[string]int{},
+		Kind:       map[string]int{},
 	}
 }
 
@@ -453,6 +558,9 @@ func (f *Facets) Merge(o Facets) {
 	}
 	for k, v := range o.Cities {
 		f.Cities[k] += v
+	}
+	for k, v := range o.Kind {
+		f.Kind[k] += v
 	}
 }
 
@@ -480,24 +588,36 @@ func CountFacets(ctx context.Context, q FacetQuery, f Filter) (Facets, error) {
 	now := f.Now()
 	out := NewFacets()
 
-	// 1. Вёдра «когда», «бесплатно» и общее число — одним запросом: пять
-	// COUNT(*) FILTER по одной и той же выборке дешевле пяти проходов.
+	// 1. Вёдра «когда», вёдра полосы, «бесплатно» и общее число — одним
+	// запросом: семь COUNT(*) FILTER по одной и той же выборке дешевле семи
+	// проходов.
+	//
+	// Полоса считается ровно как «когда»: со всеми прочими условиями фильтра,
+	// но БЕЗ своего собственного. Иначе на `?kind=running` вторая пилюля
+	// показала бы ноль, и человек прочитал бы это как «событий по дате нет»
+	// — то есть переключатель врал бы ровно в тот момент, когда им и
+	// собираются воспользоваться.
 	a := NewSQLArgs(q.Seed...)
 	city := q.Store.CityCond(f, a)
 	cat := q.Store.CategoryCond(f, a)
 	when := q.Store.WhenCond(f.When, now, a)
 	free := q.Store.FreeCond(f, a)
+	kind := q.Store.KindCond(f.Kind, now, a)
 	freeExpr := q.Store.FreeExpr()
-	buckets := make([]string, 0, len(WhenCodes))
+	buckets := make([]string, 0, len(WhenCodes)+len(KindCodes))
 	for _, code := range WhenCodes {
 		buckets = append(buckets,
-			"COUNT(*) FILTER (WHERE "+cat+" AND "+free+" AND "+q.Store.WhenCond(code, now, a)+")")
+			"COUNT(*) FILTER (WHERE "+cat+" AND "+free+" AND "+kind+" AND "+q.Store.WhenCond(code, now, a)+")")
+	}
+	for _, code := range KindCodes {
+		buckets = append(buckets,
+			"COUNT(*) FILTER (WHERE "+cat+" AND "+free+" AND "+when+" AND "+q.Store.KindCond(code, now, a)+")")
 	}
 	sql := "SELECT " + strings.Join(buckets, ", ") +
-		", COUNT(*) FILTER (WHERE " + cat + " AND " + when + " AND " + freeExpr + ")" +
-		", COUNT(*) FILTER (WHERE " + cat + " AND " + when + " AND " + free + ")" +
+		", COUNT(*) FILTER (WHERE " + cat + " AND " + when + " AND " + kind + " AND " + freeExpr + ")" +
+		", COUNT(*) FILTER (WHERE " + cat + " AND " + when + " AND " + kind + " AND " + free + ")" +
 		" " + q.From + " WHERE " + q.Base + " AND " + city
-	counts := make([]int, len(WhenCodes)+2)
+	counts := make([]int, len(WhenCodes)+len(KindCodes)+2)
 	dst := make([]any, len(counts))
 	for i := range counts {
 		dst[i] = &counts[i]
@@ -508,8 +628,11 @@ func CountFacets(ctx context.Context, q FacetQuery, f Filter) (Facets, error) {
 	for i, code := range WhenCodes {
 		out.When[code] = counts[i]
 	}
-	out.Free = counts[len(WhenCodes)]
-	out.Total = counts[len(WhenCodes)+1]
+	for i, code := range KindCodes {
+		out.Kind[code] = counts[len(WhenCodes)+i]
+	}
+	out.Free = counts[len(WhenCodes)+len(KindCodes)]
+	out.Total = counts[len(WhenCodes)+len(KindCodes)+1]
 
 	// 2. Разрез по категориям — со всеми условиями, КРОМЕ самой категории.
 	if expr := q.Store.CategoryExpr(); expr != "" {
@@ -519,6 +642,7 @@ func CountFacets(ctx context.Context, q FacetQuery, f Filter) (Facets, error) {
 			" AND " + q.Store.CityCond(f, ac) +
 			" AND " + q.Store.WhenCond(f.When, now, ac) +
 			" AND " + q.Store.FreeCond(f, ac) +
+			" AND " + q.Store.KindCond(f.Kind, now, ac) +
 			" AND " + expr + " IS NOT NULL GROUP BY 1"
 		rows, err := q.Pool.Query(ctx, sqlCat, ac.All()...)
 		if err != nil {
@@ -556,12 +680,13 @@ func CountFacets(ctx context.Context, q FacetQuery, f Filter) (Facets, error) {
 	catC := q.Store.CategoryCond(f, acity)
 	whenC := q.Store.WhenCond(f.When, now, acity)
 	freeC := q.Store.FreeCond(f, acity)
+	kindC := q.Store.KindCond(f.Kind, now, acity)
 	if q.Store.City == "" {
 		// У стора нет колонки города: его события наши и заводятся руками,
 		// то есть принадлежат городу по умолчанию.
 		var n int
 		sqlNoCity := "SELECT COUNT(*) " + q.From + " WHERE " + q.Base +
-			" AND " + catC + " AND " + whenC + " AND " + freeC
+			" AND " + catC + " AND " + whenC + " AND " + freeC + " AND " + kindC
 		if err := q.Pool.QueryRow(ctx, sqlNoCity, acity.All()...).Scan(&n); err != nil {
 			return Facets{}, err
 		}
@@ -571,7 +696,8 @@ func CountFacets(ctx context.Context, q FacetQuery, f Filter) (Facets, error) {
 		return out, nil
 	}
 	sqlCity := "SELECT " + q.Store.CityExpr(acity) + ", COUNT(*) " + q.From +
-		" WHERE " + q.Base + " AND " + catC + " AND " + whenC + " AND " + freeC + " GROUP BY 1"
+		" WHERE " + q.Base + " AND " + catC + " AND " + whenC + " AND " + freeC +
+		" AND " + kindC + " GROUP BY 1"
 	rows, err := q.Pool.Query(ctx, sqlCity, acity.All()...)
 	if err != nil {
 		return Facets{}, err

@@ -1,6 +1,17 @@
 package events
 
-import "sort"
+import (
+	"sort"
+	"time"
+)
+
+// openEndedKey — ключ порядка у события без конца. Полоса «идёт сейчас»
+// отвечает на вопрос «успею ли», и бессрочная программа отвечает на него
+// «всегда» — значит её место в самом конце, а не в начале, куда её отправил бы
+// нулевой EndTime. Дата за пределами любого реального события и совпадает по
+// смыслу с сентинелом источника (`date_end = 9999-01-01`), который в SQL
+// уезжает в конец сам.
+var openEndedKey = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
 
 // MergePage сливает страницы нескольких источников ленты в одну.
 //
@@ -26,7 +37,15 @@ import "sort"
 // одинаковым временем начала (а у студсобытий время часто «00:00 МСК» —
 // признак «время не указано») меняются местами между запросами, и человек
 // видит, как лента перетасовывается сама собой при перелистывании.
-func MergePage(pages [][]PublicEvent, limit, offset int) []PublicEvent {
+//
+// byEnd переключает КЛЮЧ слияния на время конца — для полосы «идёт сейчас»,
+// которая отвечает на «успею ли»: сверху то, что закрывается раньше. Это
+// параметр, а не второй метод, СПЕЦИАЛЬНО: подрезка окна честна ровно тогда,
+// когда каждый источник отдал свои первые offset+limit строк по ТОМУ ЖЕ ключу,
+// каким сливают здесь. Смена сигнатуры ломает компиляцию у всех вызывающих —
+// это и есть прибор, который нельзя забыть запустить; второй метод рядом
+// оставил бы старый вызов молча работающим и молча неверным.
+func MergePage(pages [][]PublicEvent, limit, offset int, byEnd bool) []PublicEvent {
 	if limit <= 0 {
 		limit = 30
 	}
@@ -34,15 +53,31 @@ func MergePage(pages [][]PublicEvent, limit, offset int) []PublicEvent {
 		offset = 0
 	}
 
+	key := func(e PublicEvent) time.Time {
+		if !byEnd {
+			return e.StartTime
+		}
+		switch {
+		case e.OpenEnded:
+			return openEndedKey
+		case e.EndTime != nil:
+			return *e.EndTime
+		}
+		// Конца нет и бессрочным событие не объявлено — значит оно кончается
+		// тогда же, когда началось. То же COALESCE(end, start), что и в SQL.
+		return e.StartTime
+	}
+
 	merged := make([]PublicEvent, 0, limit)
 	for _, p := range pages {
 		merged = append(merged, p...)
 	}
 	sort.SliceStable(merged, func(i, j int) bool {
-		if merged[i].StartTime.Equal(merged[j].StartTime) {
+		ki, kj := key(merged[i]), key(merged[j])
+		if ki.Equal(kj) {
 			return merged[i].ID < merged[j].ID
 		}
-		return merged[i].StartTime.Before(merged[j].StartTime)
+		return ki.Before(kj)
 	})
 
 	if offset >= len(merged) {

@@ -212,7 +212,13 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		result = ListResult{Featured: []PublicEvent{}, All: []PublicEvent{}}
 	}
 	pages = append([][]PublicEvent{result.All}, pages...)
-	result.All = MergePage(pages, limit, offset)
+	// Ключ слияния обязан совпасть с ORDER BY каждого источника: полоса «идёт
+	// сейчас» отсортирована по КОНЦУ (сверху то, что закрывается раньше), всё
+	// остальное — по началу. Разойдись они, окно [offset, offset+limit)
+	// перестало бы быть честным: событие, стоящее у источника за окном, могло
+	// бы оказаться в нём по другому ключу — то есть страница потеряла бы
+	// карточки и выглядела бы полной.
+	result.All = MergePage(pages, limit, offset, filter.Kind == KindRunning)
 	result.Total += extraTotal
 	result.Degraded = degraded
 	if !filter.IsEmpty() {
@@ -328,12 +334,21 @@ func facetsResponse(f Filter, agg Facets, degraded []string) FacetsResponse {
 	for _, code := range WhenCodes {
 		when[code] = agg.When[code]
 	}
+	// Обе полосы всегда, даже нулевые — в отличие от плиток разделов. Пилюля
+	// раздела с нулём это тупик, который лучше не показывать; пилюля полосы —
+	// переключатель из двух положений, и пропавшая половина читается как
+	// «полос нет», а не как «в этой полосе пусто».
+	kind := make(map[string]int, len(KindCodes))
+	for _, code := range KindCodes {
+		kind[code] = agg.Kind[code]
+	}
 	return FacetsResponse{
 		City:       f.City,
 		Cities:     cities,
 		Total:      agg.Total,
 		Categories: cats,
 		When:       when,
+		Kind:       kind,
 		Free:       agg.Free,
 		Degraded:   degraded,
 	}
@@ -347,12 +362,16 @@ func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if cached, ok := h.cache.GetEvent(ctx, id); ok {
+	// Один момент на запрос: он идёт и в ключ кэша, и в классификатор полосы.
+	// Два вызова часов дали бы карточке ключ сегодняшнего дня и полосу
+	// вчерашнего, если между ними прошла полночь.
+	now := time.Now()
+	if cached, ok := h.cache.GetEvent(ctx, id, now); ok {
 		writeJSON(w, http.StatusOK, cached)
 		return
 	}
 
-	ev, err := h.repo.GetByID(ctx, id)
+	ev, err := h.repo.GetByID(ctx, id, now)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "event not found")
@@ -362,7 +381,7 @@ func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "get failed")
 		return
 	}
-	h.cache.SetEvent(ctx, *ev, 5*time.Minute)
+	h.cache.SetEvent(ctx, *ev, 5*time.Minute, now)
 	writeJSON(w, http.StatusOK, ev)
 }
 
@@ -396,7 +415,7 @@ func (h *Handler) RegisterPublic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.cache.Invalidate(ctx, "afisha:events:"+id)
+	h.cache.InvalidateEvent(ctx, id, time.Now())
 	status := http.StatusCreated
 	if result.AlreadyRegistered {
 		status = http.StatusOK
