@@ -5,6 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0a0a0a" />
 
+    <!-- Иконка. До 07.09 её не было ни в одном виде: /favicon.ico отвечал 404,
+         и в мобильной выдаче Google рядом с нашей строкой стоял пустой квадрат,
+         а во вкладке браузера — заглушка. .ico держит 16/32/48 одним файлом
+         (его и просит краулер иконок), PNG нужны системам, которые .ico не
+         разбирают, apple-touch — экрану «на главный экран». Мандат «V» — тот же
+         вордмарк, что у приложения, набранный Unbounded: у Bowlby One, которым
+         набрана афиша, кириллицы нет вовсе, и на «В» он дал бы пустоту. -->
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="icon" href="/favicon.png" type="image/png" sizes="32x32" />
+    <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Bowlby+One&family=JetBrains+Mono:wght@400;600;700&display=swap&subset=cyrillic,latin" rel="stylesheet">

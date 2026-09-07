@@ -8,7 +8,13 @@
   import type { PublicEvent } from '$lib/types';
   import type { Section } from '$lib/taxonomy';
   import type { City, MetaTags } from '$lib/seo';
-  import { eventsCount, itemListJsonLd, breadcrumbJsonLd, jsonLdScript } from '$lib/seo';
+  import {
+    eventsCount,
+    itemListJsonLd,
+    breadcrumbJsonLd,
+    siteJsonLd,
+    jsonLdScript
+  } from '$lib/seo';
   import {
     getEvents,
     queryForSection,
@@ -167,6 +173,11 @@
   // видимого, причём на каноническом адресе, где полос как раз две.
   const ldItems = $derived(hasRunning && running ? [...items, ...running.events] : items);
   const itemListLd = $derived(jsonLdScript(itemListJsonLd(ldItems, origin)));
+  // Разметка самого сайта — только на доске города и только когда раздел не
+  // выбран. На каждой из 21 страницы раздела это была бы 21 копия одного узла:
+  // поисковику не добавляет ничего, а нам добавляет 21 место, где издатель
+  // может разъехаться.
+  const siteLd = $derived(!section ? jsonLdScript(siteJsonLd(origin)) : '');
   // В разметке для поисковика адреса обязаны быть абсолютными, а в href —
   // относительными: абсолютный href, собранный из origin, на стенде без
   // явного ORIGIN уехал бы на http и уводил бы человека с https по клику.
@@ -241,6 +252,9 @@
   {@html `<script type="application/ld+json">${itemListLd}</script>`}
   {#if crumbsLd}
     {@html `<script type="application/ld+json">${crumbsLd}</script>`}
+  {/if}
+  {#if siteLd}
+    {@html `<script type="application/ld+json">${siteLd}</script>`}
   {/if}
 </svelte:head>
 

@@ -15,7 +15,10 @@
 
 import type { PublicEvent } from './types';
 import type { EventKind } from './api';
-import { plural } from './taxonomy';
+import { plural, CATEGORY_SECTIONS } from './taxonomy';
+// Значение, а не тип: api.ts тянет отсюда ТОЛЬКО `import type { City }`,
+// который стирается при сборке, — кольца на рантайме не возникает.
+import { FALLBACK_CITY } from './api';
 
 /** Город в адресе. Форма приезжает с бэкенда — падежи не выводим правилом. */
 export interface City {
@@ -264,6 +267,93 @@ export function itemListJsonLd(events: PublicEvent[], origin: string): Record<st
       name: ev.title
     }))
   };
+}
+
+/* ------------------------------------------------------------------------ *
+ *  Сайт как объект: WebSite + издатель
+ * ------------------------------------------------------------------------ */
+
+/**
+ * Разметка самого сайта.
+ *
+ * `SearchAction` тут СОЗНАТЕЛЬНО нет. Он объявляет роботу адрес, по которому
+ * сайт умеет искать, и Google этот адрес проверяет запросом. Поиска на афише
+ * не существует вовсе (замер 07.09: ни одного поля ввода ни на доске, ни в
+ * разделах), так что объявить его значило бы дать поисковику обещание, которое
+ * нечем выполнить, — и получить строку поиска в выдаче, ведущую в 404.
+ * Появится поиск — появится и эта ветка, вместе с адресом, который отвечает.
+ *
+ * Издатель вложен, а не отдельным узлом: отдельный `Organization` без
+ * собственной страницы «о нас» — висящий в воздухе идентификатор, который
+ * нечем подтвердить. Вложенный читается как «кто издаёт вот этот сайт».
+ */
+export function siteJsonLd(origin: string): Record<string, unknown> {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'WebSite',
+    name: `Афиша ${SITE_NAME}`,
+    url: `${origin}/`,
+    inLanguage: 'ru-RU',
+    publisher: {
+      '@type': 'Organization',
+      name: SITE_NAME,
+      url: 'https://vshage.app',
+      logo: {
+        '@type': 'ImageObject',
+        url: `${origin}/icon-512.png`,
+        width: 512,
+        height: 512
+      }
+    }
+  };
+}
+
+/**
+ * Слаг города по его человеческому имени.
+ *
+ * Список городов у фронта статический — тем же списком живёт матчер маршрута
+ * (`src/params/city.ts`), он синхронный и спросить бэкенд не может. Имя,
+ * которого мы не знаем, честно возвращает `undefined`: крошка тогда начнётся
+ * с сайта, а не соврёт адресом города, которого на сайте нет.
+ */
+export function citySlugByName(name: string | null | undefined): string | undefined {
+  if (!name) return undefined;
+  const n = name.trim().toLowerCase();
+  return n === FALLBACK_CITY.name.toLowerCase() ? FALLBACK_CITY.slug : undefined;
+}
+
+/**
+ * Крошки карточки события: «Афиша Москвы → Выставки → <событие>».
+ *
+ * Зачем они на карточке, если на разделе уже есть: крошки рисуются в сниппете
+ * ВМЕСТО голого адреса, а адрес карточки — это uuid либо `ev_<хеш>`, то есть
+ * строка, по которой человек в выдаче не понимает ничего. Раздел в крошке
+ * ставится только когда рубрика известна И у неё есть свой адрес: код вне
+ * словаря (такое приезжает из конвейера) крошку не получает — пустое место
+ * честнее ссылки в никуда.
+ *
+ * Последняя крошка — сама страница. Google это допускает и именно так рисует
+ * хвост цепочки; ссылка у неё своя же, каноническая.
+ */
+export function eventCrumbs(
+  origin: string,
+  ev: { title: string; city?: string | null; category?: string | null },
+  canonical: string
+): { name: string; url: string }[] {
+  const crumbs: { name: string; url: string }[] = [];
+  const citySlug = citySlugByName(ev.city);
+  if (citySlug) {
+    crumbs.push({ name: `Афиша ${FALLBACK_CITY.of}`, url: `${origin}/${citySlug}` });
+    const section = ev.category
+      ? CATEGORY_SECTIONS.find((s) => s.code === ev.category)
+      : undefined;
+    if (section) {
+      crumbs.push({ name: section.heading, url: `${origin}/${citySlug}/${section.slug}` });
+    }
+  }
+  if (!crumbs.length) return [];
+  crumbs.push({ name: ev.title, url: canonical });
+  return crumbs;
 }
 
 export function breadcrumbJsonLd(

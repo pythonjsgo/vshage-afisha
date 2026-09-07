@@ -1,7 +1,14 @@
 <script lang="ts">
   import EventDetail from '$lib/components/EventDetail.svelte';
   import { page } from '$app/state';
-  import { eventJsonLd, eventUrl, jsonLdScript, type City } from '$lib/seo';
+  import {
+    eventJsonLd,
+    eventUrl,
+    jsonLdScript,
+    eventCrumbs,
+    breadcrumbJsonLd,
+    type City
+  } from '$lib/seo';
   let { data } = $props();
   const origin = $derived(page.url.origin);
   // Сгенерированная карточка /api/og/<uuid> положена ТОЛЬКО событиям общей
@@ -46,6 +53,13 @@
     data.event.city ? { slug: '', name: data.event.city, in: '', of: '' } : undefined
   );
   const eventLd = $derived(jsonLdScript(eventJsonLd(data.event, origin, cityForLd)));
+
+  // Крошки. В сниппете они рисуются ВМЕСТО адреса, а адрес карточки — uuid
+  // либо `ev_<хеш>`: строка, по которой человек в выдаче не понимает ничего.
+  // Пустой массив (город незнаком, рубрики нет) разметку не рисует вовсе —
+  // цепочка из одного звена не крошки, а шум.
+  const crumbs = $derived(eventCrumbs(origin, data.event, canonical));
+  const crumbsLd = $derived(crumbs.length > 1 ? jsonLdScript(breadcrumbJsonLd(origin, crumbs)) : '');
 </script>
 
 <svelte:head>
@@ -78,6 +92,9 @@
        содержать закрывающий тег script, который иначе разорвал бы разметку.
        Поэтому здесь {@html} без обработки — вторая только испортила бы JSON. -->
   {@html `<script type="application/ld+json">${eventLd}<\/script>`}
+  {#if crumbsLd}
+    {@html `<script type="application/ld+json">${crumbsLd}<\/script>`}
+  {/if}
 </svelte:head>
 
 <EventDetail event={data.event} {origin} />
