@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
 import type { LayoutServerLoad } from './$types';
+import { metrikaId } from '$lib/analytics';
 
 /**
  * Метки владения сайтом для Яндекс.Вебмастера и Google Search Console.
@@ -24,5 +25,6 @@ export const load: LayoutServerLoad = () => ({
   verification: {
     yandex: env.YANDEX_VERIFICATION?.trim() ?? '',
     google: env.GOOGLE_SITE_VERIFICATION?.trim() ?? ''
-  }
+  },
+  metrikaId: metrikaId(env.YANDEX_METRIKA_ID)
 });
