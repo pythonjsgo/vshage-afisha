@@ -1,4 +1,4 @@
-# Video covers — DEV iteration
+# Video covers
 
 A cover is a still poster plus an optional silent MP4 loop. It has no native
 player controls, play/pause button, fullscreen button, timeline or audio.
@@ -52,8 +52,8 @@ iteration; this change only provides its safe poster fallback.
   visible changing frames, opacity, pause offscreen, no buttons, reduced-motion/data-saver fallback,
   broken-video fallback and normal card navigation. All browsers headless.
 
-Deploy to DEV only for this request. Apply 024 before organizer API, then
-Afisha backend and both frontends. Do not put an MP4 in an existing image
+The user approved production rollout on 2026-09-10 after the DEV preview.
+Apply 024 before organizer API, then Afisha backend and both frontends. Do not put an MP4 in an existing image
 field. Rollback images can ignore the nullable column and keep the posters.
 
 Browser policy references: [WebKit inline/autoplay policy](https://webkit.org/blog/6784/new-video-policies-for-ios/),
