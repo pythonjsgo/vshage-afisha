@@ -30,7 +30,7 @@ func NewRepository(p *pgxpool.Pool) *Repository {
 const selectCols = `
 	e.id, e.title, d.short_description, e.description, e.location, e.start_time, e.end_time,
 	e.status, e.category, COALESCE(e.tags, '[]'::jsonb),
-	e.max_attendees, e.photo_url,
+	e.max_attendees, e.photo_url, NULLIF(to_jsonb(d)->>'cover_video_url', ''),
 	COALESCE((SELECT COUNT(*) FROM event_registrations r
 	          WHERE r.event_id = e.id AND r.status != 'cancelled'), 0),
 	COALESCE(d.registration_mode, 'auto'), d.external_registration_url, d.registration_deadline,
@@ -254,7 +254,7 @@ func (r *Repository) GetByID(ctx context.Context, id string, now time.Time) (*Pu
 	var ev PublicEvent
 	if err := rows.Scan(&ev.ID, &ev.Title, &ev.ShortDescription, &ev.Description, &ev.Location, &ev.StartTime, &ev.EndTime,
 		&ev.Status, &ev.Category, &ev.Tags,
-		&ev.MaxAttendees, &ev.PhotoURL, &ev.AttendeeCount,
+		&ev.MaxAttendees, &ev.PhotoURL, &ev.CoverVideoURL, &ev.AttendeeCount,
 		&ev.RegistrationMode, &ev.ExternalRegURL, &ev.RegDeadline,
 		&ev.PriceType, &ev.PriceMin, &ev.PriceMax, &ev.Currency,
 		&ev.City, &ev.VenueName, &ev.Address, &ev.OnlineURL, &ev.AgeLimit, &ev.AttendeesNote,
@@ -487,7 +487,7 @@ func (r *Repository) query(ctx context.Context, now time.Time, sql string, args 
 		var ev PublicEvent
 		if err := rows.Scan(&ev.ID, &ev.Title, &ev.ShortDescription, &ev.Description, &ev.Location, &ev.StartTime, &ev.EndTime,
 			&ev.Status, &ev.Category, &ev.Tags,
-			&ev.MaxAttendees, &ev.PhotoURL, &ev.AttendeeCount,
+			&ev.MaxAttendees, &ev.PhotoURL, &ev.CoverVideoURL, &ev.AttendeeCount,
 			&ev.RegistrationMode, &ev.ExternalRegURL, &ev.RegDeadline,
 			&ev.PriceType, &ev.PriceMin, &ev.PriceMax, &ev.Currency,
 			&ev.City, &ev.VenueName, &ev.Address, &ev.OnlineURL, &ev.AgeLimit, &ev.AttendeesNote,

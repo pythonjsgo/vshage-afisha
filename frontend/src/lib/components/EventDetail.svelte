@@ -8,6 +8,7 @@
   import AppCTA from './AppCTA.svelte';
   import LiveCounter from './LiveCounter.svelte';
   import EventGallery from './EventGallery.svelte';
+  import EventCover from './EventCover.svelte';
 
   let { event, origin }: { event: PublicEvent; origin: string } = $props();
   const url = $derived(`${origin}/${event.id}`);
@@ -43,7 +44,8 @@
 </script>
 
 <article class="detail" class:cancelled>
-  <header class="cover" style={event.photo_url ? `background-image: url(${event.photo_url})` : ''}>
+  <header class="cover">
+    <EventCover poster={event.photo_url} video={event.cover_video_url} eager />
     <div class="overlay"></div>
     <nav class="back-nav"><a href="/">← АФИША</a></nav>
     <div class="hd">

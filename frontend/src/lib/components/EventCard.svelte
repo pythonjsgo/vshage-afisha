@@ -2,6 +2,7 @@
   import type { PublicEvent } from '$lib/types';
   import { formatWhen } from '$lib/dateFormat';
   import MetaPill from './MetaPill.svelte';
+  import EventCover from './EventCover.svelte';
   import { categoryLabel } from '$lib/taxonomy';
 
   let { event }: { event: PublicEvent } = $props();
@@ -39,17 +40,17 @@
   );
 </script>
 
-<a {href} class="card" class:cancelled>
+<article class="card" class:cancelled>
   <div
     class="photo"
     class:no-photo={!event.photo_url}
-    style={event.photo_url ? `background-image: url(${event.photo_url})` : ''}
   >
+    {#if event.photo_url}<EventCover poster={event.photo_url} video={event.cover_video_url} />{/if}
     {#if !event.photo_url}
       <div class="ph-pattern"></div>
     {/if}
   </div>
-  <div class="body">
+  <a {href} class="card-link"><div class="body">
     <div class="top">
       {#if cancelled}
         <MetaPill text="Отменено" variant="warning" />
@@ -71,11 +72,12 @@
     {#if event.organizer_name}
       <div class="org">by {event.organizer_name}</div>
     {/if}
-  </div>
-</a>
+  </div></a>
+</article>
 
 <style>
   .card {
+    position: relative;
     display: block;
     background: var(--bg-elev);
     border: 1px solid var(--border);
@@ -84,6 +86,9 @@
                 box-shadow var(--dur-fast) var(--ease-out),
                 border-color var(--dur-fast) var(--ease-out);
   }
+  .card-link { color: inherit; text-decoration: none; }
+  .card-link::after { content: ''; position: absolute; inset: 0; z-index: 1; }
+  .card:focus-within { outline: 2px solid var(--accent-green); outline-offset: 3px; }
   .card:hover {
     transform: translateY(-2px);
     border-color: var(--accent-pink);

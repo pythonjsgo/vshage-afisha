@@ -50,6 +50,8 @@ export interface PublicEvent {
   max_attendees?: number;
   attendee_count: number;
   photo_url?: string;
+  /** Silent decorative loop. photo_url remains its image poster for older clients. */
+  cover_video_url?: string;
   status: 'published' | 'cancelled' | 'draft';
   registration_mode?: 'auto' | 'manual' | 'external';
   external_registration_url?: string;
