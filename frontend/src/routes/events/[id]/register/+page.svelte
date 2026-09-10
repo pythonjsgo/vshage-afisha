@@ -1,4 +1,5 @@
 <script lang="ts">
+  import EventCover from '$lib/components/EventCover.svelte';
   import { untrack } from 'svelte';
   import { page } from '$app/state';
   import { enhance } from '$app/forms';
@@ -267,7 +268,8 @@
 <main class="register-page">
   <nav class="back-nav"><a href={`/${event.id}`}>← СОБЫТИЕ</a></nav>
 
-  <section class="hero" style={event.photo_url ? `background-image: url(${event.photo_url})` : ''}>
+  <section class="hero">
+    <EventCover poster={event.photo_url} video={event.cover_video_url} eager />
     <div class="overlay"></div>
     <div class="hero-content">
       <div class="kicker">РЕГИСТРАЦИЯ</div>
