@@ -2,13 +2,15 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { chromium, expect } from '@playwright/test';
+import { chromium, webkit, expect } from '@playwright/test';
 
 const url = new URL(process.env.VSHAGE_VIDEO_EVENT_URL ?? '');
 assert(['localhost', '127.0.0.1', 'afisha.dev.vshage.app'].includes(url.hostname), 'Use DEV/local only');
 const artifacts = process.env.VSHAGE_VIDEO_ARTIFACTS ?? '/tmp/vshage-video-browser';
 await fs.mkdir(artifacts, { recursive: true });
-const browser = await chromium.launch({ headless: true });
+const engine = process.env.VSHAGE_VIDEO_BROWSER ?? 'chromium';
+assert(['chromium', 'webkit'].includes(engine), 'Use chromium or webkit');
+const browser = await ({ chromium, webkit })[engine].launch({ headless: true });
 const results = [];
 const contexts = [];
 const errors = [];
@@ -21,12 +23,29 @@ async function context(options = {}) {
 const state = video => video.evaluate(v => ({
   time: v.currentTime, paused: v.paused, muted: v.muted, controls: v.controls,
   loop: v.loop, inline: v.playsInline, source: v.getAttribute('src'),
-  ready: v.dataset.ready, failed: v.dataset.failed,
+  ready: v.dataset.ready, failed: v.dataset.failed, opacity: getComputedStyle(v).opacity,
 }));
 async function advancing(video) {
   await expect.poll(async () => (await state(video)).paused).toBe(false);
   const before = (await state(video)).time;
   await expect.poll(async () => Math.abs((await state(video)).time - before), { timeout: 20000 }).toBeGreaterThan(0.15);
+  // A moving clock is not proof of a visible cover: Svelte previously
+  // stripped the runtime data-ready selector and left this at opacity:0.
+  await expect.poll(async () => Number((await state(video)).opacity)).toBe(1);
+}
+async function paintedFrames(video, label) {
+  const frames = [];
+  for (let i = 0; i < 2; i++) {
+    frames.push(await video.screenshot({
+      path: path.join(artifacts, `${label}-frame-${i}.png`),
+      animations: 'disabled',
+      // Temporarily lift the real cover over decorative title overlays, so
+      // a changing heading cannot masquerade as a changing video frame.
+      style: '[data-event-cover] { z-index: 2147483647 !important; } .scanlines { display: none !important; }',
+    }));
+    if (!i) await new Promise(resolve => setTimeout(resolve, 1200));
+  }
+  assert(!frames[0].equals(frames[1]), 'Rendered video frames must visibly differ');
 }
 async function stopped(video) {
   await expect.poll(async () => (await state(video)).paused).toBe(true);
@@ -38,20 +57,21 @@ async function stopped(video) {
 try {
   const desktop = await context({ recordVideo: { dir: path.join(artifacts, 'recordings'), size: { width: 1440, height: 800 } } });
   const page = await desktop.newPage();
+  // Returning users must not retain a pause they can no longer undo after
+  // the user-requested removal of all play/pause controls.
+  await page.addInitScript(() => localStorage.setItem('vshage.cover-motion-paused', '1'));
   const response = await page.goto(url.href);
   assert.equal(response.status(), 200);
   const video = page.locator('[data-cover-video]').first();
   await advancing(video);
+  await paintedFrames(video, 'desktop');
+  assert.equal(await page.locator('[data-event-cover] button').count(), 0);
   const initial = await state(video);
   assert(initial.muted && initial.inline && initial.loop && !initial.controls);
   await expect(video).toHaveAttribute('aria-hidden', 'true');
   const poster = page.locator('[data-event-cover] img').first();
   await expect.poll(() => poster.evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
   await page.screenshot({ path: path.join(artifacts, 'desktop.png'), fullPage: true });
-  await page.getByRole('button', { name: /Остановить анимацию|Pause animation/ }).first().click();
-  await stopped(video);
-  await page.getByRole('button', { name: /Включить анимацию|Enable animation/ }).first().click();
-  await advancing(video);
   await page.evaluate(() => {
     // A short event may fit in the viewport. The fixture only supplies enough
     // scroll distance to move the actual cover completely out of view.
@@ -63,7 +83,7 @@ try {
   await stopped(video);
   await page.evaluate(() => { document.getElementById('video-check-scroll-space').remove(); window.scrollTo(0, 0); });
   await advancing(video);
-  results.push({ scenario: 'desktop: silent loop, pause/resume, offscreen/resume', pass: true });
+  results.push({ scenario: 'desktop: visible changing frames, no controls, cleared old pause, offscreen/resume', pass: true });
 
   // The poster is the negative control: deliberate network failure must
   // stop playback while retaining the actual image, not an empty rectangle.
@@ -87,6 +107,7 @@ try {
     if (scenario === 'blocked-video') await expect(clip).toHaveAttribute('data-failed', 'true');
     await stopped(clip);
     assert.equal((await state(clip)).ready, undefined);
+    assert.equal((await state(clip)).opacity, '0');
     if (scenario !== 'blocked-video') {
       assert.equal(mp4Requests, 0, 'System preference must prevent downloading the MP4');
       assert.equal((await state(clip)).source, null);
@@ -100,26 +121,23 @@ try {
   const mobilePage = await phone.newPage();
   await mobilePage.goto(url.href);
   await advancing(mobilePage.locator('[data-cover-video]').first());
+  await paintedFrames(mobilePage.locator('[data-cover-video]').first(), 'mobile');
+  assert.equal(await mobilePage.locator('[data-event-cover] button').count(), 0);
   assert(await mobilePage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'No horizontal overflow');
   await mobilePage.screenshot({ path: path.join(artifacts, 'mobile.png'), fullPage: true });
-  results.push({ scenario: 'mobile Chromium viewport: inline playback and layout', pass: true });
+  results.push({ scenario: 'mobile viewport: visible changing frames, inline playback and layout', pass: true });
   await phone.close();
 
-  // The real listing verifies pointer hit targets after converting the card
-  // to an article with a stretched link and a separate motion button.
+  // The real listing uses the same visible motion and poster contract.
   await page.goto(`${url.origin}/msk/sport`);
   const card = page.locator('article.card').filter({ has: page.locator(`a[href="${url.pathname}"]`) }).first();
   await expect(card).toBeVisible();
   await card.scrollIntoViewIfNeeded();
   const cardVideo = card.locator('[data-cover-video]');
   await advancing(cardVideo);
+  await paintedFrames(cardVideo, 'listing');
   assert(await page.locator('[data-cover-video]').evaluateAll(videos => videos.filter(v => !v.paused).length <= 1));
-  const listingUrl = page.url();
-  await card.getByRole('button', { name: /Остановить анимацию|Pause animation/ }).click();
-  await stopped(cardVideo);
-  assert.equal(page.url(), listingUrl, 'Motion toggle must not navigate');
-  await card.getByRole('button', { name: /Включить анимацию|Enable animation/ }).click();
-  await advancing(cardVideo);
+  assert.equal(await card.locator('[data-event-cover] button').count(), 0);
   await page.screenshot({ path: path.join(artifacts, 'listing.png') });
   const photo = card.locator('.photo');
   await photo.evaluate(node => node.scrollIntoView({ block: 'center' }));
@@ -130,11 +148,11 @@ try {
   await page.mouse.click(rect.x + rect.width / 2, rect.y + rect.height / 2);
   await expect(page).toHaveURL(url.href);
   await advancing(page.locator('[data-cover-video]').first());
-  results.push({ scenario: 'listing: single active clip, motion button, cover navigation', pass: true });
+  results.push({ scenario: 'listing: visible changing frames, single active clip, no controls, cover navigation', pass: true });
   assert.deepEqual(errors, [], 'No uncaught page errors');
-  console.log(JSON.stringify({ url: url.href, results, errors }, null, 2));
+  console.log(JSON.stringify({ url: url.href, engine, results, errors }, null, 2));
 } finally {
   for (const value of contexts) await value.close().catch(() => {});
   await browser.close();
-  await fs.writeFile(path.join(artifacts, 'result.json'), JSON.stringify({ url: url.href, results, errors }, null, 2));
+  await fs.writeFile(path.join(artifacts, 'result.json'), JSON.stringify({ url: url.href, engine, results, errors }, null, 2));
 }
