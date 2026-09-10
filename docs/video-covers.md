@@ -59,3 +59,27 @@ field. Rollback images can ignore the nullable column and keep the posters.
 Browser policy references: [WebKit inline/autoplay policy](https://webkit.org/blog/6784/new-video-policies-for-ios/),
 [MDN autoplay](https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Autoplay),
 [reduced motion](https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-reduced-motion).
+
+## DEV preview, 2026-09-10
+
+[INVEST PADEL](https://afisha.dev.vshage.app/04364617-8ef8-477d-b578-76407f95c777)
+uses the supplied 15.5-second clip, normalized to 848×464 H.264/YUV420p,
+1,350,858 bytes, one video stream and no audio. The JPEG is a separate asset;
+Range GET returns 206. Price is 5,000 RUB and registration links to Bogdan.
+The DEV organizer is isolated; the event's venue was not supplied.
+
+Headless Chromium checks passed for desktop, mobile viewport, actual time
+advancement, controls disabled, pause/resume, offscreen/resume, a failed MP4,
+reduced motion and data saver (both zero MP4 requests), listing motion button
+and pointer navigation. This is browser emulation, not native iOS validation.
+
+Reproduce the read-only browser checks from `frontend/`:
+
+```sh
+npx playwright install chromium --only-shell
+VSHAGE_VIDEO_EVENT_URL=https://afisha.dev.vshage.app/04364617-8ef8-477d-b578-76407f95c777 \
+  node scripts/verify-video-cover.mjs
+```
+
+The script permits only DEV/local hosts and submits no registration. A
+temporary DOM spacer verifies offscreen behavior even for a short page.
