@@ -3,6 +3,7 @@
   import { formatWhen } from '$lib/dateFormat';
   import { onMount } from 'svelte';
   import GlitchText from './GlitchText.svelte';
+  import EventCover from './EventCover.svelte';
 
   let { events }: { events: PublicEvent[] } = $props();
   let idx = $state(0);
@@ -25,8 +26,9 @@
        прийти. Заодно ушло выдуманное «00:00» у событий без известного времени:
        formatEventDateLong звалась здесь без признака start_time_known. -->
   {@const when = formatWhen(active)}
-  <a class="hero" href={active.webreg_slug ? `/e/${active.webreg_slug}` : `/${active.id}`}
-     style={active.photo_url ? `background-image: url(${active.photo_url})` : ''}>
+  <div class="hero">
+    <EventCover poster={active.photo_url} video={active.cover_video_url} eager />
+    <a class="hero-link" href={active.webreg_slug ? `/e/${active.webreg_slug}` : `/${active.id}`}>
     <div class="overlay"></div>
     <div class="content">
       <div class="kicker">FEATURED · {String(idx + 1).padStart(2, '0')} / {String(events.length).padStart(2, '0')}</div>
@@ -53,7 +55,8 @@
         <div class:on={i === idx}></div>
       {/each}
     </div>
-  </a>
+    </a>
+  </div>
 {/if}
 
 <style>
@@ -61,7 +64,6 @@
     position: relative;
     display: block;
     min-height: 380px;
-    padding: var(--sp-5);
     background: linear-gradient(135deg, #200428 0%, #0a0a0a 100%);
     background-size: cover;
     background-position: center;
@@ -70,6 +72,7 @@
     text-decoration: none;
     color: var(--fg);
   }
+  .hero-link { display: block; position: relative; padding: var(--sp-5); color: inherit; text-decoration: none; }
   .overlay {
     position: absolute; inset: 0;
     background: linear-gradient(180deg, transparent 40%, rgba(0,0,0,0.8) 100%);

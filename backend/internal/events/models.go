@@ -19,6 +19,7 @@ type PublicEvent struct {
 	MaxAttendees     *int            `json:"max_attendees,omitempty"`
 	AttendeeCount    int             `json:"attendee_count"`
 	PhotoURL         *string         `json:"photo_url,omitempty"`
+	CoverVideoURL    *string         `json:"cover_video_url,omitempty"`
 	Status           string          `json:"status"`
 	RegistrationMode *string         `json:"registration_mode,omitempty"`
 	ExternalRegURL   *string         `json:"external_registration_url,omitempty"`
