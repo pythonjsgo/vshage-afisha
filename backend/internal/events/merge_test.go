@@ -154,3 +154,17 @@ func TestMergePage_БезКонцаСчитаетсяПоНачалу(t *testing
 		t.Fatalf("жду [soon noend later], получил %v", got)
 	}
 }
+
+func TestMergePageFeaturedPriorityAndPagination(t *testing.T) {
+	p := -100
+	pin := ev("pin", 90)
+	pin.IsFeatured = true
+	pin.FeaturedPosition = &p
+	pages := [][]PublicEvent{{pin, ev("m1", 10), ev("m2", 50)}, {ev("e1", 5), ev("e2", 20)}}
+	if got := ids(MergePage(pages, 2, 0, false)); !eq(got, "pin", "e1") {
+		t.Fatalf("first: %v", got)
+	}
+	if got := ids(MergePage(pages, 2, 2, false)); !eq(got, "m1", "e2") {
+		t.Fatalf("second: %v", got)
+	}
+}
