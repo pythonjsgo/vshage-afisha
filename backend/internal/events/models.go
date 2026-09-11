@@ -25,6 +25,7 @@ type PublicEvent struct {
 	ExternalRegURL   *string         `json:"external_registration_url,omitempty"`
 	RegDeadline      *time.Time      `json:"registration_deadline,omitempty"`
 	PriceType        *string         `json:"price_type,omitempty"`
+	PriceText        *string         `json:"price_text,omitempty"`
 	PriceMin         *int            `json:"price_min,omitempty"`
 	PriceMax         *int            `json:"price_max,omitempty"`
 	Currency         *string         `json:"currency,omitempty"`

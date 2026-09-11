@@ -57,6 +57,8 @@ export interface PublicEvent {
   external_registration_url?: string;
   registration_deadline?: string;
   price_type?: 'free' | 'paid' | 'donation';
+  /** Display wording supplied by an external organizer; no numeric guessing. */
+  price_text?: string;
   price_min?: number;
   price_max?: number;
   currency?: string;
