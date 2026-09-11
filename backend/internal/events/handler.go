@@ -165,7 +165,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, cached)
 		return
 	}
-	result, listErr := h.repo.List(ctx, ListQuery{Limit: window, Offset: 0, Filter: filter})
+	result, listErr := h.repo.List(ctx, ListQuery{Limit: window, Offset: 0, Filter: filter, Since: filter.At})
 	if listErr != nil {
 		log.Printf("events.List: %v", listErr)
 	}
@@ -179,7 +179,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	if listErr != nil {
 		degraded = append(degraded, "main")
 	}
-	since := time.Now().Add(-24 * time.Hour)
+	since := filter.At
 	for _, src := range h.extra {
 		name := sourceName(src)
 		page, err := src.UpcomingForAfisha(ctx, since, filter, window, 0)
@@ -266,7 +266,7 @@ func (h *Handler) Facets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filter.At = time.Now()
-	since := filter.At.Add(-24 * time.Hour)
+	since := filter.At
 
 	agg := NewFacets()
 	degraded := []string{}

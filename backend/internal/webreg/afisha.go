@@ -58,7 +58,7 @@ var afishaStore = events.StoreSQL{
 // Обещание показать идущее, которое стор структурно не в состоянии выполнить,
 // хуже отсутствующей полосы.
 func afishaBase(since string) string {
-	return "publish_afisha AND COALESCE(ends_at, starts_at) >= " + since
+	return "publish_afisha AND " + events.NotEndedSQL("starts_at", "ends_at", since)
 }
 
 // afishaOrder — порядок списка. Полоса «идёт сейчас» отвечает на «успею ли»:

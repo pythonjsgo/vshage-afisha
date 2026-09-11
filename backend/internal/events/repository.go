@@ -77,15 +77,9 @@ const (
 // стало бы шесть, а расходятся такие копии тихо: подпись «показано N из M»
 // врёт ровно на разницу между предикатом списка и предикатом счётчика.
 //
-// «Не старше суток» меряется по КОНЦУ события, а не по началу (правка 07.09).
-// Пока мерялось по началу, программа, идущая с прошлой недели, отсутствовала
-// на доске вовсе — не была спрятана фильтром, а не существовала для него, — и
-// полоса «идёт сейчас» не могла получить из этого стора ни одной строки.
-// Обещание показать идущее, которое стор структурно не в состоянии выполнить,
-// хуже отсутствующей полосы. Затронуто 0 строк на DEV и на PROD (замер 07.09):
-// проверить это живой базой нельзя, поэтому проверяется фикстурой
-// (TestИдущееМногодневноеВидноОбщимСтором).
-const boardBase = `e.status = 'published' AND COALESCE(e.end_time, e.start_time) >= $1 AND ` + visibleOnBoard
+// A known end must still be in the future. With no end, keep the event
+// through its Moscow calendar day. Apply this before pins and pagination.
+var boardBase = `e.status = 'published' AND ` + NotEndedSQL("e.start_time", "e.end_time", "$1") + ` AND ` + visibleOnBoard
 
 // boardCountFrom — минимальный FROM для счётчиков: только таблицы, на которые
 // смотрят условия фильтра. Профили и провайдеры нужны карточке, а не счёту.
@@ -142,9 +136,10 @@ const selectFrom = `
 `
 
 func (r *Repository) List(ctx context.Context, q ListQuery) (ListResult, error) {
+	now := q.Filter.Now()
 	since := q.Since
 	if since.IsZero() {
-		since = time.Now().Add(-24 * time.Hour)
+		since = now
 	}
 	// Закреплённое относится к доске ГОРОДА, а не к разделу: закреплённый
 	// концерт в шапке страницы «Выставки» — это ложь, причём убедительная,
@@ -158,7 +153,6 @@ func (r *Repository) List(ctx context.Context, q ListQuery) (ListResult, error) 
 	// шапки. Сегодня этого не видно ничем: на проде закреплено точечное
 	// событие, и разница появится ровно в тот день, когда куратор закрепит
 	// выставку, — то есть молча и не сразу.
-	now := q.Filter.Now()
 	featured := []PublicEvent{}
 	if q.Filter.IsEmpty() {
 		pinned := q.Filter
@@ -226,7 +220,7 @@ func (r *Repository) List(ctx context.Context, q ListQuery) (ListResult, error) 
 // вторая, похожая реализация.
 func (r *Repository) Facets(ctx context.Context, since time.Time, f Filter) (Facets, error) {
 	if since.IsZero() {
-		since = time.Now().Add(-24 * time.Hour)
+		since = f.Now()
 	}
 	return CountFacets(ctx, FacetQuery{
 		Pool:  r.pool,

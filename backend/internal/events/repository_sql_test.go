@@ -587,10 +587,9 @@ func TestKindSQLСовпадаетСClassifyНаСледующийДень(t *te
 
 	// 08.09, полдень. Вечеринка «ночное» кончилась в 02:00 этого дня.
 	now := time.Date(2026, 9, 8, 12, 0, 0, 0, mskZone)
-	since := time.Date(2026, 9, 7, 12, 0, 0, 0, mskZone)
 	list := func(kind string) []PublicEvent {
 		t.Helper()
-		res, err := repo.List(ctx, ListQuery{Limit: 100, Since: since,
+		res, err := repo.List(ctx, ListQuery{Limit: 100,
 			Filter: Filter{City: DefaultCity(), At: now, Kind: kind}})
 		if err != nil {
 			t.Fatalf("kind=%q: %v", kind, err)
@@ -610,8 +609,8 @@ func TestKindSQLСовпадаетСClassifyНаСледующийДень(t *te
 	if inLane(running, "ночное") {
 		t.Error("вчерашняя вечеринка 19:00→02:00 стоит в полосе «идёт сейчас» — и первой, потому что её конец самый ранний")
 	}
-	if !inLane(timed, "ночное") {
-		t.Errorf("вчерашняя вечеринка не попала и в «по дате и времени»: %v", boardLabels(byID, timed))
+	if inLane(timed, "ночное") {
+		t.Errorf("закончившаяся вечеринка осталась в текущей выдаче: %v", boardLabels(byID, timed))
 	}
 	// КОНТРОЛЬ: настоящая идущая программа в этот день по-прежнему идёт.
 	// Без него тест прошёл бы и при полосе, которая опустела целиком.
