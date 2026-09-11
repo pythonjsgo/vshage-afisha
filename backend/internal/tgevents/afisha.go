@@ -65,7 +65,8 @@ const selectCard = `
 		       city, place_name, address, online,
 		       price_raw, is_free, registration_url, access_level,
 		       segment, category, org_name, source_url, venue,
-		       (cover IS NOT NULL) AS has_cover
+		       (cover IS NOT NULL) AS has_cover,
+		       to_char(updated_at AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS') AS cover_revision
 		FROM afisha_tg_events`
 
 // orderCard — порядок ровно по тому же ключу, каким сливает events.MergePage.
@@ -252,9 +253,10 @@ type eff struct {
 // колонок у выборки прибавляется, и каждая новая иначе разъезжается по двум
 // сигнатурам плюс двум вызовам.
 type cardRow struct {
-	Card     Card
-	Eff      eff
-	HasCover bool
+	Card          Card
+	Eff           eff
+	HasCover      bool
+	CoverRevision string
 	// Venue — сырой кураторский JSONB (008_feed_curation.sql). Разбирается в
 	// parseVenue, а не сканируется в структуру: поле правится руками, и его
 	// может не быть вовсе.
@@ -270,7 +272,7 @@ func scanCard(rows scanner) (cardRow, error) {
 		&row.Card.City, &row.Card.PlaceName, &row.Card.Address, &row.Card.Online,
 		&row.Card.PriceRaw, &row.Card.IsFree, &row.Card.RegistrationURL,
 		&row.Card.AccessLevel, &row.Card.Segment, &row.Card.Category, &row.Card.OrgName,
-		&row.Card.SourceURL, &row.Venue, &row.HasCover)
+		&row.Card.SourceURL, &row.Venue, &row.HasCover, &row.CoverRevision)
 	row.Eff.Date = effDate.Format(dateLayout)
 	return row, err
 }
@@ -394,7 +396,12 @@ func toPublic(row cardRow, now time.Time) events.PublicEvent {
 	}
 	if hasCover {
 		// Свой origin, не CDN телеги: тот протухает за дни (замер 23.08).
-		ev.PhotoURL = strPtr("/api/tg-events/" + c.ID + "/cover")
+		coverURL := "/api/tg-events/" + c.ID + "/cover"
+		// A changed photo must not reuse the day-long cached URL.
+		if row.CoverRevision != "" {
+			coverURL += "?v=" + row.CoverRevision
+		}
+		ev.PhotoURL = strPtr(coverURL)
 	}
 	if c.PlaceName != nil && *c.PlaceName != "" {
 		ev.Location = c.PlaceName
@@ -411,8 +418,13 @@ func toPublic(row cardRow, now time.Time) events.PublicEvent {
 	if c.Category != nil && *c.Category != "" {
 		ev.Category = c.Category
 	}
-	if c.IsFree != nil && *c.IsFree {
-		ev.PriceType = strPtr("free")
+	ev.PriceText = c.PriceRaw
+	if c.IsFree != nil {
+		if *c.IsFree {
+			ev.PriceType = strPtr("free")
+		} else {
+			ev.PriceType = strPtr("paid")
+		}
 	}
 	// Регистрация всегда ВНЕШНЯЯ: мы не ведём списки на чужие события.
 	ev.RegistrationMode = strPtr("external")
