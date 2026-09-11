@@ -217,6 +217,8 @@ func (f Filter) IsEmpty() bool {
 // ленту: 200, карточки есть, просто чужие. Немой отказ — и на минуту он
 // одинаков для всех, кто открыл раздел.
 //
+// The active:v1 namespace cannot reuse lists from the old 24-hour grace
+// window. Every key carries the Moscow day, including an unfiltered page.
 // Для `when` в ключ едет ещё и разрешённая дата: «сегодня», посчитанное до
 // полуночи, после полуночи означает другой день, а TTL записи переживает
 // полночь. У полосы ровно та же беда, и она злее: `kind=running` — это
@@ -224,17 +226,18 @@ func (f Filter) IsEmpty() bool {
 // а не на одно ведро. Без даты в ключе первая минута суток раздавала бы
 // вчерашнее разбиение всем, кто открыл доску.
 func (f Filter) CacheKey(limit, offset int) string {
+	now := f.Now()
 	free := "0"
 	if f.Free {
 		free = "1"
 	}
-	key := "afisha:events:list:" + strconv.Itoa(limit) + ":" + strconv.Itoa(offset) +
+	key := "afisha:events:active:v1:" + now.In(mskZone).Format("2006-01-02") + ":" + strconv.Itoa(limit) + ":" + strconv.Itoa(offset) +
 		":" + f.City.Slug + ":" + f.Category + ":" + f.When + ":" + free
-	if r, ok := whenRange(f.When, f.Now()); ok {
+	if r, ok := whenRange(f.When, now); ok {
 		key += ":" + r.FirstDate() + "-" + r.LastDate()
 	}
 	if f.Kind != "" {
-		key += ":" + f.Kind + ":" + f.Now().In(mskZone).Format("2006-01-02")
+		key += ":" + f.Kind + ":" + now.In(mskZone).Format("2006-01-02")
 	}
 	return key
 }
@@ -279,10 +282,9 @@ func whenRange(code string, now time.Time) (dayRange, bool) {
 	case WhenWeekend:
 		// Ближайшие сб+вс; если сегодня суббота или воскресенье — ТЕКУЩИЕ.
 		// В воскресенье отрезок начинается со вчерашней субботы намеренно:
-		// доска и так держит вчерашнее ещё сутки (окно since = now-24h), и
-		// «выходные» без субботы означали бы, что в воскресенье раздел
-		// показывает меньше, чем общая лента, — расхождение, которое человек
-		// прочитает как пропажу событий.
+		// программа, начавшаяся в субботу и продолжающаяся в воскресенье,
+		// всё ещё относится к этим выходным. Завершённое исключает общий
+		// предикат активности до разбиения на разделы.
 		var sat time.Time
 		switch today.Weekday() {
 		case time.Saturday:
@@ -305,7 +307,7 @@ func whenRange(code string, now time.Time) (dayRange, bool) {
 type SQLArgs struct{ args []any }
 
 // NewSQLArgs заводит нумератор, уже занятый аргументами базового предиката
-// стора (обычно граница «не старше суток»).
+// стора (обычно момент проверки активности).
 func NewSQLArgs(seed ...any) *SQLArgs {
 	a := &SQLArgs{args: make([]any, 0, len(seed)+8)}
 	a.args = append(a.args, seed...)
