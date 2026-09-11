@@ -14,6 +14,7 @@ import (
 var openEndedKey = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
 
 // MergePage сливает страницы нескольких источников ленты в одну.
+// Editorial pins precede the chronological order in every source and here.
 //
 // Зачем отдельная функция. До 30.08 лента знала ровно один дополнительный
 // источник и приклеивала его ЦЕЛИКОМ к уже обрезанной странице основного:
@@ -73,7 +74,14 @@ func MergePage(pages [][]PublicEvent, limit, offset int, byEnd bool) []PublicEve
 		merged = append(merged, p...)
 	}
 	sort.SliceStable(merged, func(i, j int) bool {
-		ki, kj := key(merged[i]), key(merged[j])
+		a, b := merged[i], merged[j]
+		if a.IsFeatured != b.IsFeatured {
+			return a.IsFeatured
+		}
+		if a.IsFeatured && a.FeaturedPosition != nil && b.FeaturedPosition != nil && *a.FeaturedPosition != *b.FeaturedPosition {
+			return *a.FeaturedPosition < *b.FeaturedPosition
+		}
+		ki, kj := key(a), key(b)
 		if ki.Equal(kj) {
 			return merged[i].ID < merged[j].ID
 		}
