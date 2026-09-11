@@ -136,3 +136,55 @@ func TestOrderCardПереключаетКлюч(t *testing.T) {
 		t.Errorf("порядок по началу = %q, ожидали %q", byStart, want)
 	}
 }
+
+// The public website used to lose both paid status and the source price,
+// making a paid event indistinguishable from a registration-only listing.
+func TestExternalPriceSurvivesPublicMapping(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		free *bool
+		want string
+	}{
+		{name: "paid", free: boolPtr(false), want: "paid"},
+		{name: "free", free: boolPtr(true), want: "free"},
+		{name: "unknown", want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			row := kdRow("ev_price", "2026-09-22", "", "2026-09-22", nil)
+			price := "от 10 000 ₽"
+			row.Card.PriceRaw, row.Card.IsFree = &price, tc.free
+			ev := toPublic(row, kdNow)
+			if ev.PriceText == nil || *ev.PriceText != price {
+				t.Fatal("source price was lost")
+			}
+			if tc.want == "" {
+				if ev.PriceType != nil {
+					t.Fatal("unknown price was guessed")
+				}
+			} else if ev.PriceType == nil || *ev.PriceType != tc.want {
+				t.Fatalf("price type = %v", ev.PriceType)
+			}
+			if ev.PriceMin != nil || ev.PriceMax != nil {
+				t.Fatal("numeric prices must not be guessed from prose")
+			}
+		})
+	}
+}
+
+func boolPtr(value bool) *bool { return &value }
+
+func TestCoverReplacementChangesPublicURL(t *testing.T) {
+	row := kdRow("ev_cover", "2026-09-22", "", "2026-09-22", nil)
+	row.HasCover = true
+	row.CoverRevision = "20260911090000000000"
+	before := toPublic(row, kdNow)
+	row.CoverRevision = "20260911100000000000"
+	after := toPublic(row, kdNow)
+	if before.PhotoURL == nil || after.PhotoURL == nil || *before.PhotoURL == *after.PhotoURL {
+		t.Fatal("updated cover retained the stale cached URL")
+	}
+	row.HasCover = false
+	if toPublic(row, kdNow).PhotoURL != nil {
+		t.Fatal("revision invented a missing image")
+	}
+}
