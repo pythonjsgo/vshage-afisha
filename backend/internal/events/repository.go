@@ -106,7 +106,9 @@ var mainStore = StoreSQL{
 	End:   "COALESCE(e.end_time, e.start_time)",
 }
 
-// boardOrder — порядок списка. Полоса «идёт сейчас» отвечает на вопрос
+// boardOrder puts editorial pins first, before pagination, matching MergePage.
+// Among unpinned events the time lane preserves its existing order.
+// Полоса «идёт сейчас» отвечает на вопрос
 // «успею ли», поэтому сверху то, что закрывается раньше; у всего остального
 // вопрос прежний — «когда», и порядок по началу.
 //
@@ -121,9 +123,9 @@ var mainStore = StoreSQL{
 // есть два порядка расходились бы на равных ключах.
 func boardOrder(f Filter) string {
 	if f.Kind == KindRunning {
-		return "COALESCE(e.end_time, e.start_time) ASC, e.id"
+		return "f.position ASC NULLS LAST, COALESCE(e.end_time, e.start_time) ASC, e.id"
 	}
-	return "e.start_time ASC"
+	return "f.position ASC NULLS LAST, e.start_time ASC, e.id"
 }
 
 // Joins referenced by selectCols. Used by every SELECT in this file.

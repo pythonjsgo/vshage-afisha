@@ -634,3 +634,44 @@ func TestKindSQLСовпадаетСClassifyНаСледующийДень(t *te
 		t.Errorf("в полосах %d карточек, на доске %d", len(running)+len(timed), len(whole))
 	}
 }
+
+func TestSQLFeaturedBeforePaginationAndWithinFilters(t *testing.T) {
+	pool := boardPool(t)
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `INSERT INTO events(id,title,start_time,status,category,tags)
+ SELECT ('00000000-0000-0000-0000-'||LPAD(n::text,12,'0'))::uuid,'Event '||n,NOW()+n*INTERVAL '1 day','published','networking','[]'::jsonb FROM generate_series(1,45) n;
+ INSERT INTO organizer_event_details(event_id,city,visibility) SELECT id,'Москва','public' FROM events;
+ INSERT INTO afisha_featured SELECT id,-100 FROM events WHERE title='Event 45';`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := NewRepository(pool)
+	q := ListQuery{Limit: 2, Filter: Filter{City: DefaultCity(), Category: "networking"}}
+	got, err := r.List(ctx, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.All) != 2 || got.All[0].Title != "Event 45" || !got.All[0].IsFeatured {
+		t.Fatalf("pin must survive source window: %+v", got.All)
+	}
+	q.Offset = 2
+	next, err := r.List(ctx, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(next.All) != 2 || next.All[0].Title != "Event 2" {
+		t.Fatalf("page 2: %+v", next.All)
+	}
+	_, err = pool.Exec(ctx, `UPDATE organizer_event_details SET visibility='unlisted' WHERE event_id=(SELECT id FROM events WHERE title='Event 45')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q.Offset = 0
+	got, err = r.List(ctx, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.All[0].Title != "Event 1" || got.Total != 44 {
+		t.Fatalf("unlisted pin leaked: %+v", got)
+	}
+}
