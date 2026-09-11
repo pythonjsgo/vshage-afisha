@@ -2,24 +2,21 @@
 type Connection = EventTarget & { saveData?: boolean };
 type Entry = { video: HTMLVideoElement; source: string; ratio: number; failed: boolean; pending: boolean };
 const entries = new Map<HTMLVideoElement, Entry>();
-const listeners = new Set<() => void>();
 let observer: IntersectionObserver | undefined;
 let initialized = false;
-let userPaused = false;
 let reduced = false;
 let saveData = false;
 let active: Entry | undefined;
-const preferenceKey = 'vshage.cover-motion-paused';
 
-export function coverMotionSnapshot(): number {
-  return (userPaused ? 1 : 0) | (reduced ? 2 : 0) | (saveData ? 4 : 0);
+function motionDisabled(): boolean {
+  return reduced || saveData;
 }
 
 function refresh() {
   if (typeof document === 'undefined') return;
   let winner: Entry | undefined;
   let distance = Infinity;
-  if (!coverMotionSnapshot() && !document.hidden) {
+  if (!motionDisabled() && !document.hidden) {
     for (const entry of entries.values()) {
       if (entry.ratio < 0.35 || entry.failed) continue;
       const rect = entry.video.getBoundingClientRect();
@@ -61,25 +58,21 @@ function refresh() {
 function initialize() {
   if (initialized || typeof window === 'undefined') return;
   initialized = true;
-  try { userPaused = localStorage.getItem(preferenceKey) === '1'; } catch { /* private mode */ }
+  // The old preview had a pause button. Removing it must not strand returning
+  // visitors on a persisted pause they can no longer undo.
+  try { localStorage.removeItem('vshage.cover-motion-paused'); } catch { /* private mode */ }
   const media = window.matchMedia('(prefers-reduced-motion: reduce)');
   const connection = (navigator as Navigator & { connection?: Connection }).connection;
   const preferencesChanged = () => {
     reduced = media.matches;
     saveData = connection?.saveData === true;
     refresh();
-    for (const listener of listeners) listener();
   };
   preferencesChanged();
   media.addEventListener('change', preferencesChanged);
   connection?.addEventListener('change', preferencesChanged);
   document.addEventListener('visibilitychange', refresh);
   window.addEventListener('resize', refresh);
-  window.addEventListener('storage', event => {
-    if (event.key !== preferenceKey) return;
-    userPaused = event.newValue === '1'; refresh();
-    for (const listener of listeners) listener();
-  });
   if (typeof IntersectionObserver !== 'undefined') {
     observer = new IntersectionObserver(changes => {
       for (const change of changes) {
@@ -91,21 +84,6 @@ function initialize() {
   }
 }
 
-export function subscribeCoverMotion(listener: () => void): () => void {
-  initialize();
-  listeners.add(listener);
-  return () => { listeners.delete(listener); };
-}
-
-export function toggleCoverMotion() {
-  initialize();
-  userPaused = !userPaused;
-  try { localStorage.setItem(preferenceKey, userPaused ? '1' : '0'); } catch { /* private mode */ }
-  for (const entry of entries.values()) { entry.failed = false; delete entry.video.dataset.failed; }
-  refresh();
-  for (const listener of listeners) listener();
-}
-
 export function registerCoverVideo(video: HTMLVideoElement, source: string): () => void {
   initialize();
   const entry: Entry = { video, source, ratio: 0, failed: false, pending: false };
@@ -114,7 +92,7 @@ export function registerCoverVideo(video: HTMLVideoElement, source: string): () 
   video.muted = true; video.loop = true; video.playsInline = true;
   video.controls = false; video.preload = 'none';
   const playing = () => {
-    if (active !== entry || coverMotionSnapshot() || document.hidden) { video.pause(); return; }
+    if (active !== entry || motionDisabled() || document.hidden) { video.pause(); return; }
     video.dataset.ready = 'true'; video.dataset.playing = 'true';
   };
   const paused = () => { video.dataset.playing = 'false'; };
