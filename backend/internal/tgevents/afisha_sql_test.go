@@ -604,3 +604,20 @@ func TestGetByIDКлассифицируетПоПереданномуМомен
 		}
 	}
 }
+
+func TestStructuredFactsSQLProjection(t *testing.T) {
+	pool := sqlTestPool(t)
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `INSERT INTO afisha_tg_events(id,title,annonce,date,time_start,city,is_free,org_name,payload) VALUES('ev_facts','A lecture','Source announcement','2026-09-18','18:00','Москва',FALSE,'Host','{"time_end":"20:00","price":{"amount":1500,"currency":"RUB"},"org":{"url":"https://host.example/"},"performers":[{"type":"Person","name":"Anna"}],"registration":{"valid_from":"2026-09-01T10:00:00+03:00"}}')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := NewRepository(pool)
+	card, err := repo.GetByID(ctx, "ev_facts", kdNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.PriceMin == nil || *card.PriceMin != 1500 || card.EndDate == nil || *card.EndDate != "2026-09-18T20:00:00+03:00" || card.OrganizerURL == nil || len(card.Performers) != 1 || card.OffersValidFrom == nil {
+		t.Fatalf("facts lost in SQL projection: %+v", card)
+	}
+}

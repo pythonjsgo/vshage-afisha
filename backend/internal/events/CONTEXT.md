@@ -12,3 +12,7 @@ deliberately has no current-board time filter. CacheKey has an active-version
 namespace and a Moscow day, including for unfiltered lists.
 
 See docs/active-events.md and the real PostgreSQL expiry_sql_test.go cases.
+
+Native organizer URLs use the provider's public slug and the environment's
+MyVshage hostname. Four new metadata fields are optional and omitted when
+unknown; existing response keys, visibility and time fields are unchanged.

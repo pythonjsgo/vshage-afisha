@@ -16,6 +16,7 @@
 import type { PublicEvent } from './types';
 import type { EventKind } from './api';
 import { plural, CATEGORY_SECTIONS } from './taxonomy';
+import { httpURL, eventAction } from './event-actions';
 // Значение, а не тип: api.ts тянет отсюда ТОЛЬКО `import type { City }`,
 // который стирается при сборке, — кольца на рантайме не возникает.
 import { FALLBACK_CITY } from './api';
@@ -179,9 +180,11 @@ export function eventJsonLd(ev: PublicEvent, origin: string, city?: City): Recor
   // У импортированной карточки конец программы — это ДАТА, а не момент:
   // бэкенд ставит последний день плюс 23:59 как сторож «до конца дня»
   // (tgevents/afisha.go). Отдать его как есть — сообщить роботу, что
-  // выставка закрывается в 23:59. Времени закрытия мы не знаем ни у одной
-  // такой карточки.
-  if (ev.end_time) {
+  // выставка закрывается в 23:59. Explicit end_date preserves a source
+  // clock when one is available, including same-day events.
+  if (ev.end_date) {
+    node.endDate = ev.end_date;
+  } else if (ev.end_time) {
     node.endDate = ev.source === 'tg' ? mskDate(ev.end_time) : ev.end_time;
   }
   const desc = (ev.short_description || ev.description || '').trim().replace(/\s+/g, ' ');
@@ -235,6 +238,10 @@ export function eventJsonLd(ev: PublicEvent, origin: string, city?: City): Recor
     ev.registration_mode !== 'external' && typeof ev.max_attendees === 'number'
       ? 'https://schema.org/InStock' : undefined;
 
+  const offerUrl = abs(httpURL(ev.external_registration_url)?.href
+    || (/^\/(?!\/)/.test(ev.external_registration_url ?? '') ? ev.external_registration_url! : undefined)
+    || eventAction(ev)?.href || url);
+
   // offers: цену объявляем только когда знаем её. «0» по умолчанию — это
   // обещание бесплатного входа от нашего имени на чужое событие.
   if (ev.price_type === 'free') {
@@ -243,22 +250,32 @@ export function eventJsonLd(ev: PublicEvent, origin: string, city?: City): Recor
       price: 0,
       priceCurrency: ev.currency || 'RUB',
       availability,
-      url: abs(ev.external_registration_url || url)
+      url: offerUrl,
+      ...(validOfferDate(ev.offers_valid_from) ? { validFrom: ev.offers_valid_from } : {})
     };
-  } else if (typeof ev.price_min === 'number') {
+  } else if (typeof ev.price_min === 'number' && Number.isFinite(ev.price_min) && ev.price_min >= 0) {
     node.offers = {
       '@type': 'Offer',
       price: ev.price_min,
       priceCurrency: ev.currency || 'RUB',
       availability,
-      url: abs(ev.external_registration_url || url)
+      url: offerUrl,
+      ...(validOfferDate(ev.offers_valid_from) ? { validFrom: ev.offers_valid_from } : {})
     };
   }
 
   if (ev.organizer_name) {
-    node.organizer = { '@type': 'Organization', name: ev.organizer_name };
+    const organizerUrl = httpURL(ev.organizer_url);
+    node.organizer = { '@type': 'Organization', name: ev.organizer_name, ...(organizerUrl ? {url: organizerUrl.href} : {}) };
   }
+  const performers = (ev.performers ?? []).filter(p =>
+    (p.type === 'Person' || p.type === 'PerformingGroup') && p.name.trim());
+  if (performers.length) node.performer = performers.map(p => ({'@type':p.type,name:p.name.trim()}));
   return node;
+}
+
+function validOfferDate(value?: string): boolean {
+  return Boolean(value && /^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value)));
 }
 
 /** A readable factual snippet, without modifying the event body for search. */

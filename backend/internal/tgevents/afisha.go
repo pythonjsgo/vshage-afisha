@@ -68,7 +68,10 @@ const selectCard = `
 		       (cover IS NOT NULL) AS has_cover,
 		       to_char(updated_at AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS') AS cover_revision,
 		       updated_at, NULLIF(payload #>> '{seo,description}', '') AS seo_description,
-		       listed AS is_listed
+		       listed AS is_listed,
+         jsonb_build_object('price',payload->'price','org',payload->'org',
+           'performers',payload->'performers','registration',payload->'registration',
+           'time_start',time_start,'time_end',payload->'time_end','end_time',payload->'end_time') AS structured_facts
 		FROM afisha_tg_events`
 
 // orderCard — порядок ровно по тому же ключу, каким сливает events.MergePage.
@@ -278,7 +281,7 @@ func scanCard(rows scanner) (cardRow, error) {
 		&row.Card.PriceRaw, &row.Card.IsFree, &row.Card.RegistrationURL,
 		&row.Card.AccessLevel, &row.Card.Segment, &row.Card.Category, &row.Card.OrgName,
 		&row.Card.SourceURL, &row.Venue, &row.HasCover, &row.CoverRevision,
-		&row.UpdatedAt, &row.SEODescription, &row.Listed)
+		&row.UpdatedAt, &row.SEODescription, &row.Listed, &row.Card.Payload)
 	row.Eff.Date = effDate.Format(dateLayout)
 	return row, err
 }
@@ -453,6 +456,7 @@ func toPublic(row cardRow, now time.Time) events.PublicEvent {
 	// Последней строкой и ровно тем же правилом, что у двух других сторов:
 	// полоса — свойство события, а не источника. Здесь оно обязано стоять
 	// ПОСЛЕ ActualStartDate и OpenEnded — Classify читает оба.
+	applyStructuredFacts(&ev, c)
 	ev.Classify(now)
 	return ev
 }
