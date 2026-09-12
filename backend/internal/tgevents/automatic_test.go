@@ -155,8 +155,9 @@ func TestAutomaticEndpointRequiresAuthenticationAndValidBatch(t *testing.T) {
 	}{
 		{"", `{"decisions":[]}`, 401},
 		{"secret", `{"decisions":[]}`, 400},
-		{"secret", `{"decisions":[{"id":"x","publish":true,"reason":"eligible"},{"id":"x","publish":false,"reason":"ad"}]}`, 400},
-		{"secret", `{"decisions":[{"id":"x","publish":true}]}`, 400},
+		{"secret", `{"decisions":[{"id":"ev_abc123","publish":true,"reason":"eligible"},{"id":"ev_abc123","publish":false,"reason":"ad"}]}`, 400},
+		{"secret", `{"decisions":[{"id":"ev_abc123","publish":true}]}`, 400},
+		{"secret", `{"decisions":[{"id":"ev_abc123","reason":"eligible"}]}`, 400},
 	} {
 		r := httptest.NewRequest("POST", "/api/tg-events/admin/decisions", strings.NewReader(test.body))
 		r.Header.Set("X-Admin-Token", test.token)
