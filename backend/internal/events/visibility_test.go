@@ -65,9 +65,9 @@ func TestEveryQueryUsesTheNamedVisibilityRule(t *testing.T) {
 	if n := strings.Count(body, "COALESCE(d.visibility, 'public') "); n != 2 {
 		t.Errorf("условий видимости мимо констант: %d (ожидали только два объявления)", n)
 	}
-	// Объявление + boardBase: доска знает правило видимости в одном месте.
-	if n := strings.Count(body, "visibleOnBoard"); n != 2 {
-		t.Errorf("visibleOnBoard встречается %d раз (ожидали объявление и boardBase) — правило видимости расползлось", n)
+	// Declaration + boardBase + selectCols' indexable projection use one rule.
+	if n := strings.Count(body, "visibleOnBoard"); n != 3 {
+		t.Errorf("visibleOnBoard count=%d; expected declaration, board filter and SEO projection", n)
 	}
 	if n := strings.Count(body, "visibleByLink"); n != 2 { // объявление + карточка
 		t.Error("карточка события фильтрует не по visibleByLink")
