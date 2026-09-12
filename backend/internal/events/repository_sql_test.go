@@ -674,3 +674,23 @@ func TestSQLFeaturedBeforePaginationAndWithinFilters(t *testing.T) {
 		t.Fatalf("unlisted pin leaked: %+v", got)
 	}
 }
+
+func TestOrganizerProfileURLSQL(t *testing.T) {
+	pool := boardPool(t)
+	ctx := context.Background()
+	boardSeed(t, pool)
+	_, err := pool.Exec(ctx, `ALTER TABLE providers ADD COLUMN slug TEXT;
+ INSERT INTO profiles(id,name) VALUES('00000000-0000-0000-0000-000000000abc','Organizer');
+ INSERT INTO providers(profile_id,display_name,slug) VALUES('00000000-0000-0000-0000-000000000abc','Host','public-host');
+ UPDATE events SET organizer_id='00000000-0000-0000-0000-000000000abc';`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	card, err := NewRepository(pool).GetByID(ctx, "00000000-0000-0000-0000-00000000000c", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.OrganizerURL == nil || *card.OrganizerURL != "https://my.vshage.app/p/public-host" {
+		t.Fatalf("profile URL: %+v", card)
+	}
+}
