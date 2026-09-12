@@ -331,3 +331,35 @@ describe('listingMeta — полоса не уезжает в каноничес
     expect(listingMeta({ ...qBase, kind: 'running' }).description).toContain('260 событий');
   });
 });
+
+describe('eventJsonLd — source-backed recommended fields', () => {
+  it('emits the exact end, host, performers and known sale opening', () => {
+    const node = eventJsonLd(ev({
+      end_date:'2026-09-12T22:00:00+03:00', source:'tg',
+      end_time:'2026-09-12T23:59:00+03:00',
+      organizer_name:'Host',organizer_url:'https://host.example/',
+      performers:[{type:'Person',name:'Anna Ivanova'}],
+      price_type:'paid',price_min:1500,registration_mode:'external',
+      external_registration_url:'https://tickets.example/event',
+      offers_valid_from:'2026-08-01T12:00:00+03:00'
+    }),ORIGIN) as any;
+    expect(node.endDate).toBe('2026-09-12T22:00:00+03:00');
+    expect(node.organizer.url).toBe('https://host.example/');
+    expect(node.performer).toEqual([{'@type':'Person',name:'Anna Ivanova'}]);
+    expect(node.offers.validFrom).toBe('2026-08-01T12:00:00+03:00');
+    expect(node.offers.price).toBe(1500);
+  });
+  it('links external offers to the visible source action when no registration URL exists', () => {
+    const node=eventJsonLd(ev({source:'tg',price_type:'paid',price_min:600,source_url:'https://source.example/event'}),ORIGIN) as any;
+    expect(node.offers.url).toBe('https://source.example/event');
+  });
+  it('does not invent a performer, sale opening or organizer website', () => {
+    const node=eventJsonLd(ev({organizer_name:'Host',source_url:'https://aggregator.example/event',updated_at:'2026-09-01T12:00:00Z',price_type:'free'}),ORIGIN) as any;
+    expect(node.performer).toBeUndefined();expect(node.offers.validFrom).toBeUndefined();
+    expect(node.organizer.url).toBeUndefined();expect(node.endDate).toBeUndefined();
+  });
+  it('rejects unsafe organizer URLs and invalid sale opening timestamps', () => {
+    const node=eventJsonLd(ev({organizer_name:'Host',organizer_url:'javascript:alert(1)',price_type:'free',offers_valid_from:'yesterday'}),ORIGIN) as any;
+    expect(node.organizer.url).toBeUndefined();expect(node.offers.validFrom).toBeUndefined();
+  });
+});

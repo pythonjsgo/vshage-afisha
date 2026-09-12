@@ -53,7 +53,8 @@ const selectCols = `
 	COALESCE(d.reg_form, '{}'::jsonb), COALESCE(d.reg_fields, '[]'::jsonb),
 	` + visibleOnBoard + `,
 	GREATEST(NULLIF(to_jsonb(e)->>'updated_at','')::timestamptz,
-	         NULLIF(to_jsonb(d)->>'updated_at','')::timestamptz)
+	         NULLIF(to_jsonb(d)->>'updated_at','')::timestamptz),
+ NULLIF(to_jsonb(pr)->>'slug','')
 `
 
 // visibility различает три состояния, и разница между вторым и третьим — это
@@ -251,6 +252,7 @@ func (r *Repository) GetByID(ctx context.Context, id string, now time.Time) (*Pu
 		return nil, pgx.ErrNoRows
 	}
 	var ev PublicEvent
+	var organizerSlug *string
 	if err := rows.Scan(&ev.ID, &ev.Title, &ev.ShortDescription, &ev.Description, &ev.Location, &ev.StartTime, &ev.EndTime,
 		&ev.Status, &ev.Category, &ev.Tags,
 		&ev.MaxAttendees, &ev.PhotoURL, &ev.CoverVideoURL, &ev.AttendeeCount,
@@ -259,7 +261,7 @@ func (r *Repository) GetByID(ctx context.Context, id string, now time.Time) (*Pu
 		&ev.City, &ev.VenueName, &ev.Address, &ev.OnlineURL, &ev.AgeLimit, &ev.AttendeesNote,
 		&ev.IsFeatured, &ev.FeaturedPosition,
 		&ev.OrganizerName, &ev.OrganizerPhoto, &ev.Photos,
-		&ev.RegForm, &ev.RegFields, &ev.Indexable, &ev.UpdatedAt); err != nil {
+		&ev.RegForm, &ev.RegFields, &ev.Indexable, &ev.UpdatedAt, &organizerSlug); err != nil {
 		return nil, err
 	}
 	// Карточка события классифицируется ТОЖЕ: подпись даты на детальной
@@ -270,6 +272,7 @@ func (r *Repository) GetByID(ctx context.Context, id string, now time.Time) (*Pu
 	// строит ключ кэша карточки (см. eventCacheKey). Свои часы означали бы, что
 	// карточка легла под ключ одного дня с полосой другого, если между двумя
 	// вызовами прошла полночь.
+	ev.OrganizerURL = organizerPageURL(organizerSlug)
 	ev.Classify(now)
 	return &ev, nil
 }
@@ -484,6 +487,7 @@ func (r *Repository) query(ctx context.Context, now time.Time, sql string, args 
 	out := make([]PublicEvent, 0, 16)
 	for rows.Next() {
 		var ev PublicEvent
+		var organizerSlug *string
 		if err := rows.Scan(&ev.ID, &ev.Title, &ev.ShortDescription, &ev.Description, &ev.Location, &ev.StartTime, &ev.EndTime,
 			&ev.Status, &ev.Category, &ev.Tags,
 			&ev.MaxAttendees, &ev.PhotoURL, &ev.CoverVideoURL, &ev.AttendeeCount,
@@ -492,12 +496,13 @@ func (r *Repository) query(ctx context.Context, now time.Time, sql string, args 
 			&ev.City, &ev.VenueName, &ev.Address, &ev.OnlineURL, &ev.AgeLimit, &ev.AttendeesNote,
 			&ev.IsFeatured, &ev.FeaturedPosition,
 			&ev.OrganizerName, &ev.OrganizerPhoto, &ev.Photos,
-			&ev.RegForm, &ev.RegFields, &ev.Indexable, &ev.UpdatedAt); err != nil {
+			&ev.RegForm, &ev.RegFields, &ev.Indexable, &ev.UpdatedAt, &organizerSlug); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				continue
 			}
 			return nil, err
 		}
+		ev.OrganizerURL = organizerPageURL(organizerSlug)
 		ev.Classify(now)
 		out = append(out, ev)
 	}
