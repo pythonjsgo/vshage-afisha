@@ -10,7 +10,7 @@
   import LiveCounter from './LiveCounter.svelte';
   import EventGallery from './EventGallery.svelte';
   import EventCover from './EventCover.svelte';
-  import { eventAction, eventPrice, eventSource } from '$lib/event-actions';
+  import { eventAction, eventPrice, eventSource, httpURL } from '$lib/event-actions';
   import { documentEventLocale, eventCopy, type EventLocale, type EventCopyKey } from '$lib/event-copy';
 
   let { event, origin }: { event: PublicEvent; origin: string } = $props();
@@ -80,6 +80,15 @@
         {#if event.end_time}<br />{formatEndDate(event.end_time)}{/if}
       {/if}
     </div></div>
+    {#if event.end_date}
+      <div class="row"><div class="k">{t('ends')}</div><div class="v">{formatEventDateLong(event.end_date, event.end_date.includes('T'))}</div></div>
+    {/if}
+    {#if event.performers?.length}
+      <div class="row"><div class="k">{t('performers')}</div><div class="v">{event.performers.map(p => p.name).join(', ')}</div></div>
+    {/if}
+    {#if event.offers_valid_from}
+      <div class="row"><div class="k">{t('salesStart')}</div><div class="v">{formatEventDateLong(event.offers_valid_from)}</div></div>
+    {/if}
     {#if place}
       <div class="row"><div class="k">{t('where')}</div><div class="v">{place}
         {#if event.address && event.address !== place}<span class="address">{event.address}</span>{/if}
@@ -94,7 +103,9 @@
           {:else}
             <span class="avatar ph">{event.organizer_name.charAt(0).toUpperCase()}</span>
           {/if}
-          <span>{event.organizer_name}</span>
+          {#if event.organizer_url && httpURL(event.organizer_url)}
+            <a href={event.organizer_url} target="_blank" rel="noopener noreferrer">{event.organizer_name}</a>
+          {:else}<span>{event.organizer_name}</span>{/if}
         </div>
       </div>
     {/if}

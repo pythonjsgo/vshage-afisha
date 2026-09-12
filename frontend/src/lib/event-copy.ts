@@ -7,7 +7,7 @@ const copy = {
     websiteRegister: 'Регистрация на сайте', details: 'Подробнее о событии',
     participation: 'Участие', price: 'Стоимость', free: 'Бесплатно', donation: 'Свободный взнос',
     from: 'от', organizerSite: 'Страница организатора', eventSource: 'О событии',
-    when: 'Когда', where: 'Где', organizer: 'Организатор', who: 'Кто идёт', going: 'идут',
+    ends: 'Окончание', performers: 'Участники программы', salesStart: 'Начало регистрации', when: 'Когда', where: 'Где', organizer: 'Организатор', who: 'Кто идёт', going: 'идут',
     afisha: 'Афиша', cancelled: 'Отменено', students: 'Для студентов', invite: 'По приглашению',
   },
   en: {
@@ -17,7 +17,7 @@ const copy = {
     websiteRegister: 'Register on the website', details: 'Event details',
     participation: 'Attend', price: 'Price', free: 'Free', donation: 'Optional donation',
     from: 'from', organizerSite: 'Organizer page', eventSource: 'About the event',
-    when: 'When', where: 'Where', organizer: 'Organizer', who: 'Who is going', going: 'going',
+    ends: 'Ends', performers: 'Program participants', salesStart: 'Registration opens', when: 'When', where: 'Where', organizer: 'Organizer', who: 'Who is going', going: 'going',
     afisha: 'Events', cancelled: 'Cancelled', students: 'For students', invite: 'By invitation',
   },
 } as const;

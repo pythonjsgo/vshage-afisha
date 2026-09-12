@@ -6,7 +6,19 @@ import (
 	"time"
 )
 
+// Performer is explicit source data, never an organizer or an inferred name.
+type Performer struct {
+	Type string `json:"type"`
+	Name string `json:"name"`
+}
+
 type PublicEvent struct {
+	// Optional, source-backed facts for search. EndDate keeps date precision
+	// separate from EndTime's legacy end-of-day sorting sentinel.
+	EndDate          *string         `json:"end_date,omitempty"`
+	OrganizerURL     *string         `json:"organizer_url,omitempty"`
+	Performers       []Performer     `json:"performers,omitempty"`
+	OffersValidFrom  *string         `json:"offers_valid_from,omitempty"`
 	ID               string          `json:"id"`
 	Title            string          `json:"title"`
 	ShortDescription *string         `json:"short_description,omitempty"`

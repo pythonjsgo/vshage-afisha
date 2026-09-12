@@ -1,7 +1,7 @@
 import type { PublicEvent } from './types';
 import { eventCopy, type EventCopyKey, type EventLocale } from './event-copy';
 
-function httpURL(value?: string): URL | undefined {
+export function httpURL(value?: string): URL | undefined {
   try {
     const url = new URL(value ?? '');
     return ['https:', 'http:'].includes(url.protocol) ? url : undefined;

@@ -116,7 +116,7 @@ func (r *Repository) UpsertBulk(ctx context.Context, cards []Card) (int, error) 
 				 afisha_tg_events.price_raw, afisha_tg_events.is_free, afisha_tg_events.registration_url,
 				 afisha_tg_events.access_level, afisha_tg_events.segment, afisha_tg_events.category,
 				 afisha_tg_events.org_name, afisha_tg_events.source_url, afisha_tg_events.source_key,
-				 afisha_tg_events.cover, afisha_tg_events.cover_mime, afisha_tg_events.payload->'seo'
+				 afisha_tg_events.cover, afisha_tg_events.cover_mime, afisha_tg_events.payload->'seo', afisha_tg_events.payload->'price', afisha_tg_events.payload->'org', afisha_tg_events.payload->'performers', afisha_tg_events.payload->'registration', afisha_tg_events.payload->'time_end', afisha_tg_events.payload->'end_time'
 				) IS DISTINCT FROM ROW(
 				 EXCLUDED.title, EXCLUDED.annonce, EXCLUDED.date, EXCLUDED.date_end,
 				 EXCLUDED.time_start, EXCLUDED.city, EXCLUDED.place_name, EXCLUDED.address,
@@ -124,7 +124,7 @@ func (r *Repository) UpsertBulk(ctx context.Context, cards []Card) (int, error) 
 				 EXCLUDED.access_level, EXCLUDED.segment, COALESCE(EXCLUDED.category, afisha_tg_events.category),
 				 EXCLUDED.org_name, EXCLUDED.source_url, COALESCE(EXCLUDED.source_key, afisha_tg_events.source_key),
 				 COALESCE(EXCLUDED.cover,afisha_tg_events.cover), COALESCE(EXCLUDED.cover_mime,afisha_tg_events.cover_mime),
-				 EXCLUDED.payload->'seo') THEN NOW() ELSE afisha_tg_events.updated_at END`,
+				 EXCLUDED.payload->'seo', EXCLUDED.payload->'price', EXCLUDED.payload->'org', EXCLUDED.payload->'performers', EXCLUDED.payload->'registration', EXCLUDED.payload->'time_end', EXCLUDED.payload->'end_time') THEN NOW() ELSE afisha_tg_events.updated_at END`,
 			c.ID, c.Title, c.Annonce, c.Date, c.DateEnd, c.TimeStart, c.City,
 			c.PlaceName, c.Address, c.Online, c.PriceRaw, c.IsFree,
 			c.RegistrationURL, c.AccessLevel, c.Segment, c.Category, c.OrgName,

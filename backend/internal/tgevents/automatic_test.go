@@ -116,6 +116,21 @@ func TestImportLastmodSQL(t *testing.T) {
 	if !read().After(before) {
 		t.Fatal("SEO change did not update lastmod")
 	}
+	before = read()
+	c.Payload["time_end"] = "21:00"
+	if _, err := repo.UpsertBulk(ctx, []Card{c}); err != nil {
+		t.Fatal(err)
+	}
+	if !read().After(before) {
+		t.Fatal("structured fact change did not update lastmod")
+	}
+	before = read()
+	if _, err := repo.UpsertBulk(ctx, []Card{c}); err != nil {
+		t.Fatal(err)
+	}
+	if !read().Equal(before) {
+		t.Fatal("identical structured facts changed lastmod")
+	}
 	ev, err := repo.GetByID(ctx, c.ID, time.Now())
 	if err != nil {
 		t.Fatal(err)

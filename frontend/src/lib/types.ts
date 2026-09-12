@@ -36,6 +36,11 @@ export interface RegField {
 }
 
 export interface PublicEvent {
+  /** Explicit source facts; absent when the publisher did not supply them. */
+  end_date?: string;
+  organizer_url?: string;
+  performers?: { type: 'Person' | 'PerformingGroup'; name: string }[];
+  offers_valid_from?: string;
   id: string;
   /** Проставлен у событий веб-регистрации: карточка ведёт на /e/<slug>. */
   webreg_slug?: string;
