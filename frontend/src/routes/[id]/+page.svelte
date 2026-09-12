@@ -6,6 +6,7 @@
     eventUrl,
     jsonLdScript,
     eventCrumbs,
+    eventMetaDescription,
     breadcrumbJsonLd,
     type City
   } from '$lib/seo';
@@ -20,11 +21,7 @@
   // есть та половина условия, ради которой мы чужие анонсы показываем.
   // photo_url у импортированных относительный, поэтому origin обязателен:
   // og:image требует абсолютный адрес.
-  const ogDescription = $derived(
-    data.event.short_description?.trim() ||
-      data.event.description?.trim().replace(/\s+/g, ' ').slice(0, 180) ||
-      'Событие в афише Вшаге'
-  );
+  const ogDescription = $derived(eventMetaDescription(data.event));
   const foreign = $derived(Boolean(data.event.webreg_slug) || data.event.source === 'tg');
   const ogImage = $derived(
     foreign
@@ -63,7 +60,7 @@
 </script>
 
 <svelte:head>
-  <title>{data.event.title} · Афиша Вшаге</title>
+  <title>{data.event.title}{data.event.city ? ` · ${data.event.city}` : ''} · Афиша Вшаге</title>
   <meta name="description" content={ogDescription} />
   <link rel="canonical" href={canonical} />
   <meta property="og:site_name" content="Вшаге" />
@@ -81,7 +78,8 @@
     <meta property="og:image:height" content="630" />
   {/if}
   <meta property="og:image:alt" content={data.event.title} />
-  <meta property="og:url" content={`${origin}/${data.event.id}`} />
+  <meta property="og:url" content={canonical} />
+  <meta name="robots" content={data.event.indexable === false ? 'noindex, follow' : 'index, follow, max-image-preview:large'} />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content={data.event.title} />
   <meta name="twitter:description" content={ogDescription} />
@@ -91,7 +89,9 @@
        Экранирование делает jsonLdScript: заголовок едет из телеграма и может
        содержать закрывающий тег script, который иначе разорвал бы разметку.
        Поэтому здесь {@html} без обработки — вторая только испортила бы JSON. -->
-  {@html `<script type="application/ld+json">${eventLd}<\/script>`}
+  {#if data.event.indexable !== false}
+    {@html `<script type="application/ld+json">${eventLd}<\/script>`}
+  {/if}
   {#if crumbsLd}
     {@html `<script type="application/ld+json">${crumbsLd}<\/script>`}
   {/if}

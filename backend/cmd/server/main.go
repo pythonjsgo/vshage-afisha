@@ -187,6 +187,7 @@ func main() {
 		// мидлварью — статический сегмент "admin" стоит в одном узле с
 		// параметром {id}, и chi матчит его первым.
 		r.Get("/tg-events/admin/list", tgHandler.AdminList)
+		r.Post("/tg-events/admin/decisions", tgHandler.AdminAutomatic)
 		r.Patch("/tg-events/admin/{id}", tgHandler.AdminPatch)
 
 		// Реестр внешних источников (миграция 017): личность организатора,

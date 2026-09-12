@@ -66,7 +66,9 @@ const selectCard = `
 		       price_raw, is_free, registration_url, access_level,
 		       segment, category, org_name, source_url, venue,
 		       (cover IS NOT NULL) AS has_cover,
-		       to_char(updated_at AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS') AS cover_revision
+		       to_char(updated_at AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS') AS cover_revision,
+		       updated_at, NULLIF(payload #>> '{seo,description}', '') AS seo_description,
+		       listed AS is_listed
 		FROM afisha_tg_events`
 
 // orderCard — порядок ровно по тому же ключу, каким сливает events.MergePage.
@@ -120,7 +122,7 @@ var afishaStore = events.StoreSQL{
 // три запроса; номер аргумента у каждого свой, потому что в списке $1 занят
 // сдвигом eff_date (см. selectCard).
 func afishaBase(day string) string {
-	return "NOT hidden AND COALESCE(date_end, date) >= " + day + "::date"
+	return "NOT hidden AND listed AND COALESCE(date_end, date) >= " + day + "::date"
 }
 
 func (r *Repository) UpcomingForAfisha(ctx context.Context, since time.Time, f events.Filter, limit, offset int) ([]events.PublicEvent, error) {
@@ -253,10 +255,13 @@ type eff struct {
 // колонок у выборки прибавляется, и каждая новая иначе разъезжается по двум
 // сигнатурам плюс двум вызовам.
 type cardRow struct {
-	Card          Card
-	Eff           eff
-	HasCover      bool
-	CoverRevision string
+	Card           Card
+	Eff            eff
+	HasCover       bool
+	CoverRevision  string
+	UpdatedAt      time.Time
+	SEODescription *string
+	Listed         bool
 	// Venue — сырой кураторский JSONB (008_feed_curation.sql). Разбирается в
 	// parseVenue, а не сканируется в структуру: поле правится руками, и его
 	// может не быть вовсе.
@@ -272,7 +277,8 @@ func scanCard(rows scanner) (cardRow, error) {
 		&row.Card.City, &row.Card.PlaceName, &row.Card.Address, &row.Card.Online,
 		&row.Card.PriceRaw, &row.Card.IsFree, &row.Card.RegistrationURL,
 		&row.Card.AccessLevel, &row.Card.Segment, &row.Card.Category, &row.Card.OrgName,
-		&row.Card.SourceURL, &row.Venue, &row.HasCover, &row.CoverRevision)
+		&row.Card.SourceURL, &row.Venue, &row.HasCover, &row.CoverRevision,
+		&row.UpdatedAt, &row.SEODescription, &row.Listed)
 	row.Eff.Date = effDate.Format(dateLayout)
 	return row, err
 }
@@ -368,6 +374,11 @@ func toPublic(row cardRow, now time.Time) events.PublicEvent {
 		Address:          c.Address,
 		Source:           &source,
 		StartTimeKnown:   &timeKnown,
+		SEODescription:   row.SEODescription,
+		Indexable:        &row.Listed,
+	}
+	if !row.UpdatedAt.IsZero() {
+		ev.UpdatedAt = &row.UpdatedAt
 	}
 	// Сдвиг сортировки не должен уезжать в разметку как факт: если показанный
 	// старт не равен настоящему, отдаём настоящий отдельным полем.

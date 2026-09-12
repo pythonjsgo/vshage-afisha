@@ -50,7 +50,10 @@ const selectCols = `
 		WHERE event_id = e.id
 		ORDER BY position ASC
 	), ARRAY[]::TEXT[]),
-	COALESCE(d.reg_form, '{}'::jsonb), COALESCE(d.reg_fields, '[]'::jsonb)
+	COALESCE(d.reg_form, '{}'::jsonb), COALESCE(d.reg_fields, '[]'::jsonb),
+	` + visibleOnBoard + `,
+	GREATEST(NULLIF(to_jsonb(e)->>'updated_at','')::timestamptz,
+	         NULLIF(to_jsonb(d)->>'updated_at','')::timestamptz)
 `
 
 // visibility различает три состояния, и разница между вторым и третьим — это
@@ -256,7 +259,7 @@ func (r *Repository) GetByID(ctx context.Context, id string, now time.Time) (*Pu
 		&ev.City, &ev.VenueName, &ev.Address, &ev.OnlineURL, &ev.AgeLimit, &ev.AttendeesNote,
 		&ev.IsFeatured, &ev.FeaturedPosition,
 		&ev.OrganizerName, &ev.OrganizerPhoto, &ev.Photos,
-		&ev.RegForm, &ev.RegFields); err != nil {
+		&ev.RegForm, &ev.RegFields, &ev.Indexable, &ev.UpdatedAt); err != nil {
 		return nil, err
 	}
 	// Карточка события классифицируется ТОЖЕ: подпись даты на детальной
@@ -489,7 +492,7 @@ func (r *Repository) query(ctx context.Context, now time.Time, sql string, args 
 			&ev.City, &ev.VenueName, &ev.Address, &ev.OnlineURL, &ev.AgeLimit, &ev.AttendeesNote,
 			&ev.IsFeatured, &ev.FeaturedPosition,
 			&ev.OrganizerName, &ev.OrganizerPhoto, &ev.Photos,
-			&ev.RegForm, &ev.RegFields); err != nil {
+			&ev.RegForm, &ev.RegFields, &ev.Indexable, &ev.UpdatedAt); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				continue
 			}

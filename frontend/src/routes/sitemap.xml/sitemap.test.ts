@@ -31,14 +31,14 @@ function qEvent(id: string, over: Partial<PublicEvent> = {}): PublicEvent {
 }
 
 /** Подставной бэкенд карты: одна короткая страница выдачи и город из фасетов. */
-function qBackend() {
+function qBackend(events = [qEvent('ev_a'), qEvent('ev_b')]) {
   const calls: URL[] = [];
   const fetchFn = (async (input: string | URL) => {
     const u = new URL(String(input));
     calls.push(u);
     const body = u.pathname.endsWith('/facets')
       ? { cities: [{ slug: 'msk' }] }
-      : { featured: [], all: [qEvent('ev_a'), qEvent('ev_b')], total: 2 };
+      : { featured: [], all: events, total: events.length };
     return new Response(JSON.stringify(body), {
       status: 200,
       headers: { 'content-type': 'application/json' }
@@ -47,8 +47,8 @@ function qBackend() {
   return { fetch: fetchFn, calls };
 }
 
-async function qSitemap() {
-  const b = qBackend();
+async function qSitemap(events?: PublicEvent[]) {
+  const b = qBackend(events);
   const res = await GET({
     url: new URL('https://afisha.vshage.app/sitemap.xml'),
     fetch: b.fetch
@@ -88,6 +88,21 @@ describe('sitemap.xml — полосы в карте нет', () => {
   it('полная карта отдаётся двухсоткой и кэшируется', async () => {
     const { res } = await qSitemap();
     expect(res.status).toBe(200);
-    expect(res.headers.get('cache-control')).toContain('max-age=1800');
+    expect(res.headers.get('cache-control')).toContain('max-age=300');
+  });
+});
+
+describe('sitemap content freshness and discoverability', () => {
+  it('uses the actual edit time and omits unknown times', async () => {
+    const { body } = await qSitemap([qEvent('edited', { updated_at: '2026-09-01T10:12:00Z' }), qEvent('unknown')]);
+    expect(body).toContain('<lastmod>2026-09-01T10:12:00.000Z</lastmod>');
+    expect(body.match(/<lastmod>/g)).toHaveLength(1);
+    expect(body).not.toContain('<loc>https://afisha.vshage.app/</loc>');
+  });
+  it('excludes unlisted pages and includes real image URLs with XML escaping', async () => {
+    const { body } = await qSitemap([qEvent('private', { indexable: false }),
+      qEvent('visible', { photo_url: '/api/tg-events/visible/cover?v=1&x=2' })]);
+    expect(body).not.toContain('/private');
+    expect(body).toContain('<image:loc>https://afisha.vshage.app/api/tg-events/visible/cover?v=1&amp;x=2</image:loc>');
   });
 });
