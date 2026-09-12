@@ -151,41 +151,33 @@ async function cityEvents(
   return { events: out, partial };
 }
 
-/**
- * `lastmod` события.
- *
- * Честного источника у нас пока НЕТ: /api/events не отдаёт времени правки
- * (в internal/events/models.go поля updated_at у PublicEvent нет). Читаем его,
- * если однажды появится, и до тех пор пишем день сборки карты — доска
- * действительно пересобирается ежедневно. Слабое место названо вслух:
- * одинаковый lastmod у всех карточек робот со временем начинает игнорировать,
- * и лечится это одним полем в ответе API, а не здесь.
- */
-function lastmodOf(ev: PublicEvent, today: string): string {
-  const raw = (ev as PublicEvent & { updated_at?: string }).updated_at;
-  return typeof raw === 'string' && raw.length >= 10 ? raw.slice(0, 10) : today;
+/** Only real content timestamps belong in lastmod; unknown is omitted. */
+function lastmodOf(ev: PublicEvent): string | undefined {
+  const raw = ev.updated_at;
+  if (!raw || !/^\d{4}-\d{2}-\d{2}T/.test(raw)) return undefined;
+  const date = new Date(raw);
+  return Number.isFinite(date.getTime()) && date.getTime() <= Date.now() + 300000
+    ? date.toISOString() : undefined;
 }
 
 export const GET: RequestHandler = async ({ url, fetch }) => {
   const origin = url.origin;
-  const today = new Date().toISOString().slice(0, 10);
-
-  const entries: { loc: string; lastmod: string }[] = [];
+  const entries: { loc: string; lastmod?: string; image?: string }[] = [];
   const seenLoc = new Set<string>();
-  const add = (loc: string, lastmod: string) => {
+  const add = (loc: string, lastmod?: string, image?: string) => {
     if (seenLoc.has(loc)) return;
     seenLoc.add(loc);
-    entries.push({ loc, lastmod });
+    entries.push({ loc, lastmod, image });
   };
 
   // Главная. Она отдаёт 308 на город — робот редирект проходит и склеивает
   // адреса сам, а ссылки извне ведут именно на корень домена.
-  add(origin + '/', today);
+  // The root redirects; submit only canonical pages.
 
   const citySlugs = await cities(fetch);
   for (const city of citySlugs) {
-    add(listingUrl(origin, city), today);
-    for (const s of ALL_SECTIONS) add(listingUrl(origin, city, s.slug), today);
+    add(listingUrl(origin, city));
+    for (const s of ALL_SECTIONS) add(listingUrl(origin, city, s.slug));
   }
 
   // Адрес карточки собирает eventUrl и только он: у события веб-регистрации
@@ -197,15 +189,17 @@ export const GET: RequestHandler = async ({ url, fetch }) => {
     const got = await cityEvents(fetch, city, seenIds);
     partial = partial || got.partial;
     for (const ev of got.events) {
-      add(eventUrl(origin, ev), lastmodOf(ev, today));
+      if (ev.indexable === false) continue;
+      const image = ev.photo_url ? new URL(ev.photo_url, origin).href : undefined;
+      add(eventUrl(origin, ev), lastmodOf(ev), image?.startsWith('http') ? image : undefined);
     }
   }
 
   const body =
     '<?xml version="1.0" encoding="UTF-8"?>\n' +
-    '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
+    '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n' +
     entries
-      .map((e) => `  <url><loc>${xml(e.loc)}</loc><lastmod>${e.lastmod}</lastmod></url>`)
+      .map((e) => `  <url><loc>${xml(e.loc)}</loc>${e.lastmod ? `<lastmod>${e.lastmod}</lastmod>` : ''}${e.image ? `<image:image><image:loc>${xml(e.image)}</image:loc></image:image>` : ''}</url>`)
       .join('\n') +
     '\n</urlset>\n';
 
@@ -219,11 +213,10 @@ export const GET: RequestHandler = async ({ url, fetch }) => {
     status: partial ? 503 : 200,
     headers: {
       'Content-Type': 'application/xml; charset=utf-8',
-      // Полчаса: обход не должен пересобирать доску на каждый запрос, а
-      // событие, появившееся минуту назад, подождёт следующего обхода.
+      // Keep new automatic publications discoverable within minutes.
       'Cache-Control': partial
         ? 'no-store'
-        : 'public, max-age=1800, stale-while-revalidate=86400'
+        : 'public, max-age=300, stale-while-revalidate=300'
     }
   });
 };

@@ -243,6 +243,7 @@
 
 <svelte:head>
   <title>Регистрация · {event.title} · Афиша Вшаге</title>
+  <meta name="robots" content="noindex, follow" />
   <meta name="description" content={ogDescription} />
   <!--
     Именно эту ссылку организатор рассылает людям, и до 03.09 у неё не было

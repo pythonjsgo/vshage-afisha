@@ -85,6 +85,8 @@ func sqlTestPool(t *testing.T) *pgxpool.Pool {
 			venue            JSONB,
 			cover            BYTEA,
 			hidden           BOOLEAN NOT NULL DEFAULT FALSE,
+			listed           BOOLEAN NOT NULL DEFAULT TRUE,
+			payload          JSONB NOT NULL DEFAULT '{}',
 			updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`); err != nil {
 		t.Fatalf("создание таблицы: %v", err)

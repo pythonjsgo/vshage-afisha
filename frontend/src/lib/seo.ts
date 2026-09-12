@@ -161,12 +161,18 @@ export function eventJsonLd(ev: PublicEvent, origin: string, city?: City): Recor
     ev.actual_start_date ??
     (ev.start_time_known === false ? mskDate(ev.start_time) : ev.start_time);
 
+  // An ongoing service without a real scheduled start is a page, not a
+  // newly starting Event every day. Never turn the sorting date into a fact.
+  if (ev.open_ended) {
+    return {'@context':'https://schema.org','@type':'WebPage',name:ev.title,url,
+      description:eventMetaDescription(ev),...(ev.photo_url ? {image:abs(ev.photo_url)} : {})};
+  }
   const node: Record<string, unknown> = {
     '@context': 'https://schema.org',
     '@type': 'Event',
     name: ev.title,
     startDate,
-    eventStatus: 'https://schema.org/EventScheduled',
+    eventStatus: ev.status === 'cancelled' ? 'https://schema.org/EventCancelled' : 'https://schema.org/EventScheduled',
     url
   };
 
@@ -225,9 +231,9 @@ export function eventJsonLd(ev: PublicEvent, origin: string, city?: City): Recor
     typeof ev.max_attendees === 'number' &&
     ev.max_attendees > 0 &&
     ev.attendee_count >= ev.max_attendees;
-  const availability = soldOut
-    ? 'https://schema.org/SoldOut'
-    : 'https://schema.org/InStock';
+  const availability = soldOut ? 'https://schema.org/SoldOut' :
+    ev.registration_mode !== 'external' && typeof ev.max_attendees === 'number'
+      ? 'https://schema.org/InStock' : undefined;
 
   // offers: цену объявляем только когда знаем её. «0» по умолчанию — это
   // обещание бесплатного входа от нашего имени на чужое событие.
@@ -253,6 +259,16 @@ export function eventJsonLd(ev: PublicEvent, origin: string, city?: City): Recor
     node.organizer = { '@type': 'Organization', name: ev.organizer_name };
   }
   return node;
+}
+
+/** A readable factual snippet, without modifying the event body for search. */
+export function eventMetaDescription(ev: PublicEvent): string {
+  const text = (ev.seo_description || ev.short_description || ev.description || ev.title)
+    .replace(/\s+/g, ' ').trim();
+  if (text.length <= 180) return text;
+  const cut = text.slice(0, 177);
+  const boundary = cut.lastIndexOf(' ');
+  return (boundary > 120 ? cut.slice(0, boundary) : cut) + '…';
 }
 
 /** Список событий раздела — им поисковик строит карусель мероприятий. */

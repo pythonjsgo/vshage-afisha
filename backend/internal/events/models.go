@@ -11,6 +11,9 @@ type PublicEvent struct {
 	Title            string          `json:"title"`
 	ShortDescription *string         `json:"short_description,omitempty"`
 	Description      *string         `json:"description,omitempty"`
+	SEODescription   *string         `json:"seo_description,omitempty"`
+	UpdatedAt        *time.Time      `json:"updated_at,omitempty"`
+	Indexable        *bool           `json:"indexable,omitempty"`
 	Location         *string         `json:"location,omitempty"`
 	StartTime        time.Time       `json:"start_time"`
 	EndTime          *time.Time      `json:"end_time,omitempty"`

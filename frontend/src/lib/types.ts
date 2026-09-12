@@ -42,6 +42,10 @@ export interface PublicEvent {
   title: string;
   short_description?: string;
   description?: string;
+  /** Factual snippet; the visible event description remains unchanged. */
+  seo_description?: string;
+  updated_at?: string;
+  indexable?: boolean;
   location?: string;
   start_time: string; // ISO
   end_time?: string;

@@ -107,7 +107,24 @@ func (r *Repository) UpsertBulk(ctx context.Context, cards []Card) (int, error) 
 				payload          = EXCLUDED.payload,
 				cover            = COALESCE(EXCLUDED.cover, afisha_tg_events.cover),
 				cover_mime       = COALESCE(EXCLUDED.cover_mime, afisha_tg_events.cover_mime),
-				updated_at       = NOW()`,
+				-- Scraping the same facts is not a content update. SEO lastmod and
+				-- image revisions must remain stable across idempotent imports.
+				updated_at = CASE WHEN ROW(
+				 afisha_tg_events.title, afisha_tg_events.annonce, afisha_tg_events.date,
+				 afisha_tg_events.date_end, afisha_tg_events.time_start, afisha_tg_events.city,
+				 afisha_tg_events.place_name, afisha_tg_events.address, afisha_tg_events.online,
+				 afisha_tg_events.price_raw, afisha_tg_events.is_free, afisha_tg_events.registration_url,
+				 afisha_tg_events.access_level, afisha_tg_events.segment, afisha_tg_events.category,
+				 afisha_tg_events.org_name, afisha_tg_events.source_url, afisha_tg_events.source_key,
+				 afisha_tg_events.cover, afisha_tg_events.cover_mime, afisha_tg_events.payload->'seo'
+				) IS DISTINCT FROM ROW(
+				 EXCLUDED.title, EXCLUDED.annonce, EXCLUDED.date, EXCLUDED.date_end,
+				 EXCLUDED.time_start, EXCLUDED.city, EXCLUDED.place_name, EXCLUDED.address,
+				 EXCLUDED.online, EXCLUDED.price_raw, EXCLUDED.is_free, EXCLUDED.registration_url,
+				 EXCLUDED.access_level, EXCLUDED.segment, COALESCE(EXCLUDED.category, afisha_tg_events.category),
+				 EXCLUDED.org_name, EXCLUDED.source_url, COALESCE(EXCLUDED.source_key, afisha_tg_events.source_key),
+				 COALESCE(EXCLUDED.cover,afisha_tg_events.cover), COALESCE(EXCLUDED.cover_mime,afisha_tg_events.cover_mime),
+				 EXCLUDED.payload->'seo') THEN NOW() ELSE afisha_tg_events.updated_at END`,
 			c.ID, c.Title, c.Annonce, c.Date, c.DateEnd, c.TimeStart, c.City,
 			c.PlaceName, c.Address, c.Online, c.PriceRaw, c.IsFree,
 			c.RegistrationURL, c.AccessLevel, c.Segment, c.Category, c.OrgName,
@@ -174,9 +191,8 @@ func (r *Repository) AdminSetFlags(ctx context.Context, id string, f AdminFlags)
 	// COALESCE с явным кастом: неназванное поле приезжает NULL-параметром, и
 	// без каста тип параметра выводить не из чего.
 	//
-	// hidden_by/hidden_at ставятся ТОЛЬКО при снятии со списков и только если
-	// раньше карточка была в них: повторное «скрыть» не должно переписывать
-	// имя того, кто скрыл на самом деле, и время, когда это случилось.
+	// An explicit human hide takes ownership even if automation already hid
+	// the row. Otherwise a later automated acceptance could undo that decision.
 	err = tx.QueryRow(ctx, `
 		UPDATE afisha_tg_events SET
 			feed           = COALESCE($2::boolean, feed),
@@ -190,11 +206,15 @@ func (r *Repository) AdminSetFlags(ctx context.Context, id string, f AdminFlags)
 			hide_reason    = CASE WHEN $7::boolean IS FALSE THEN COALESCE($8::text, hide_reason)
 			                      WHEN $7::boolean IS TRUE  THEN NULL
 			                      ELSE hide_reason END,
-			hidden_by      = CASE WHEN $7::boolean IS FALSE AND listed THEN NULLIF($9::text, '')
+			hidden_by      = CASE WHEN $7::boolean IS FALSE THEN COALESCE(NULLIF($9::text, ''), 'admin')
+			                      WHEN $4::boolean IS TRUE THEN COALESCE(NULLIF($9::text, ''), 'admin')
 			                      WHEN $7::boolean IS TRUE THEN NULL
+			                      WHEN $4::boolean IS FALSE AND listed THEN NULL
 			                      ELSE hidden_by END,
-			hidden_at      = CASE WHEN $7::boolean IS FALSE AND listed THEN NOW()
+			hidden_at      = CASE WHEN $7::boolean IS FALSE THEN NOW()
+			                      WHEN $4::boolean IS TRUE THEN NOW()
 			                      WHEN $7::boolean IS TRUE THEN NULL
+			                      WHEN $4::boolean IS FALSE AND listed THEN NULL
 			                      ELSE hidden_at END,
 			updated_at     = NOW()
 		WHERE id = $1
@@ -261,13 +281,17 @@ func logCuration(ctx context.Context, tx pgx.Tx, id string, f AdminFlags, st Adm
 // дословный чужой пост, а первый в списке не нужен — решение принимается по
 // заголовку, дате и городу.
 type AdminListItem struct {
-	ID     string  `json:"id"`
-	Title  string  `json:"title"`
-	Date   string  `json:"date"`
-	City   *string `json:"city"`
-	Feed   bool    `json:"feed"`
-	Anchor bool    `json:"anchor"`
-	Hidden bool    `json:"hidden"`
+	ID         string  `json:"id"`
+	Title      string  `json:"title"`
+	Date       string  `json:"date"`
+	City       *string `json:"city"`
+	Feed       bool    `json:"feed"`
+	Anchor     bool    `json:"anchor"`
+	Hidden     bool    `json:"hidden"`
+	Listed     bool    `json:"listed"`
+	HideReason *string `json:"hide_reason"`
+	HiddenBy   *string `json:"hidden_by"`
+	HasCover   bool    `json:"has_cover"`
 }
 
 // AdminList — весь стор для курации, включая скрытое и прошедшее: список
@@ -275,7 +299,8 @@ type AdminListItem struct {
 // не вернуть на витрину.
 func (r *Repository) AdminList(ctx context.Context) ([]AdminListItem, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, title, to_char(date, 'YYYY-MM-DD'), city, feed, anchor, hidden
+		SELECT id, title, to_char(date, 'YYYY-MM-DD'), city, feed, anchor, hidden,
+		       listed, hide_reason, hidden_by, cover IS NOT NULL
 		FROM afisha_tg_events
 		ORDER BY date, id`)
 	if err != nil {
@@ -289,7 +314,7 @@ func (r *Repository) AdminList(ctx context.Context) ([]AdminListItem, error) {
 	for rows.Next() {
 		var it AdminListItem
 		if err := rows.Scan(&it.ID, &it.Title, &it.Date, &it.City,
-			&it.Feed, &it.Anchor, &it.Hidden); err != nil {
+			&it.Feed, &it.Anchor, &it.Hidden, &it.Listed, &it.HideReason, &it.HiddenBy, &it.HasCover); err != nil {
 			return nil, err
 		}
 		out = append(out, it)
