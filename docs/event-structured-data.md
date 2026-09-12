@@ -23,7 +23,7 @@ and publication timestamps are not evidence of a ticket sale opening.
 Do not fabricate participants or validFrom to clear a warning.
 
 Offer prices use numeric source data (integer API contract), with explicit
-currency; complete ruble price literals such as "600 рублей" are also preserved, while ranges/discounts/prose are rejected. No zero default
+currency; complete ruble price literals and explicit minimums such as "600 рублей" or "от 1000 рублей" are also preserved. Google defines offers.price as the lowest available ticket price; ranges/discounts/prose are rejected. No zero default
 for unknown prices. Offer URLs use a valid registration URL or the page's
 visible external action. Unknown price continues to omit offers.
 

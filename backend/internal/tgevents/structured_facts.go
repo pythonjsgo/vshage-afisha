@@ -37,8 +37,8 @@ func applyStructuredFacts(ev *events.PublicEvent, c Card) {
 		ev.PriceMin = &n
 		ev.Currency = &currency
 	}
-	// A whole price literal ("600 рублей") is an explicit price too.
-	// Ranges, "from", subscriptions, discounts and prose do not match.
+	// A whole price literal or explicit minimum ("от 600 рублей") is a
+	// known price_min. Ranges, subscriptions, discounts and prose do not match.
 	if ev.PriceMin == nil && c.PriceRaw != nil && (currency == "" || currency == "RUB") && (c.IsFree == nil || !*c.IsFree) {
 		if n := literalRublePrice(*c.PriceRaw); n != nil {
 			ev.PriceMin = n
@@ -101,7 +101,7 @@ func validHTTPURL(raw string) bool {
 	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Hostname() != "" && u.User == nil
 }
 
-var rublePriceLiteral = regexp.MustCompile(`(?i)^([1-9][0-9]*(?:[ \x{00a0}\x{202f}][0-9]{3})*)[ \x{00a0}\x{202f}]*(?:₽|руб\.?|рублей|рубля|р\.?)$`)
+var rublePriceLiteral = regexp.MustCompile(`(?i)^(?:от[ \x{00a0}\x{202f}]+)?([1-9][0-9]*(?:[ \x{00a0}\x{202f}][0-9]{3})*)[ \x{00a0}\x{202f}]*(?:₽|руб\.?|рублей|рубля|р\.?)$`)
 
 func literalRublePrice(raw string) *int {
 	match := rublePriceLiteral.FindStringSubmatch(strings.TrimSpace(raw))
