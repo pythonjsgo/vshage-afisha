@@ -139,19 +139,30 @@ func TestOrderCardПереключаетКлюч(t *testing.T) {
 
 // The public website used to lose both paid status and the source price,
 // making a paid event indistinguishable from a registration-only listing.
+//
+// Число берётся ТОЛЬКО из явного литерала. «от 10 000 ₽» — это объявленный
+// минимум (015ac94: Google читает offers.price как нижнюю доступную цену),
+// а диапазон минимума не объявляет и числом не становится. Проверяются обе
+// стороны, потому что до 13.09 фикстура «от 10 000 ₽» стояла здесь в роли
+// прозы — тест противоречил правилу из structured_facts.go, и CI бэкенда
+// был красным двое суток, блокируя выкатку соседних фич.
 func TestExternalPriceSurvivesPublicMapping(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		free *bool
-		want string
+		name    string
+		price   string
+		free    *bool
+		want    string
+		wantMin *int
 	}{
-		{name: "paid", free: boolPtr(false), want: "paid"},
-		{name: "free", free: boolPtr(true), want: "free"},
-		{name: "unknown", want: ""},
+		{name: "paid", price: "от 10 000 ₽", free: boolPtr(false), want: "paid", wantMin: intPtr(10000)},
+		{name: "free", price: "от 10 000 ₽", free: boolPtr(true), want: "free"},
+		{name: "unknown", price: "от 10 000 ₽", want: "", wantMin: intPtr(10000)},
+		// Диапазон нижней цены не объявляет — угадывать её нечем.
+		{name: "range", price: "300–600 рублей", free: boolPtr(false), want: "paid"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			row := kdRow("ev_price", "2026-09-22", "", "2026-09-22", nil)
-			price := "от 10 000 ₽"
+			price := tc.price
 			row.Card.PriceRaw, row.Card.IsFree = &price, tc.free
 			ev := toPublic(row, kdNow)
 			if ev.PriceText == nil || *ev.PriceText != price {
@@ -164,14 +175,21 @@ func TestExternalPriceSurvivesPublicMapping(t *testing.T) {
 			} else if ev.PriceType == nil || *ev.PriceType != tc.want {
 				t.Fatalf("price type = %v", ev.PriceType)
 			}
-			if ev.PriceMin != nil || ev.PriceMax != nil {
-				t.Fatal("numeric prices must not be guessed from prose")
+			switch {
+			case tc.wantMin == nil && ev.PriceMin != nil:
+				t.Fatalf("цена додумана из прозы: price_min = %d", *ev.PriceMin)
+			case tc.wantMin != nil && (ev.PriceMin == nil || *ev.PriceMin != *tc.wantMin):
+				t.Fatalf("price_min = %v, ждали %d", ev.PriceMin, *tc.wantMin)
+			}
+			if ev.PriceMax != nil {
+				t.Fatal("верхняя цена нигде не объявлена — её нельзя угадывать")
 			}
 		})
 	}
 }
 
 func boolPtr(value bool) *bool { return &value }
+func intPtr(value int) *int    { return &value }
 
 func TestCoverReplacementChangesPublicURL(t *testing.T) {
 	row := kdRow("ev_cover", "2026-09-22", "", "2026-09-22", nil)
