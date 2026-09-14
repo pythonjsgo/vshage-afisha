@@ -23,7 +23,7 @@
   const price = $derived(eventPrice(event, locale));
   const source = $derived(eventSource(event));
   const posterCover = $derived(event.cover_fit === 'contain');
-  const pastDateOnly = $derived(!event.source && event.start_time_known === false && Date.now() >= Date.parse(event.start_time) + 86400000);
+  const pastDateOnly = $derived(!event.allow_past_registration && !event.source && event.start_time_known === false && Date.now() >= Date.parse(event.start_time) + 86400000);
   const place = $derived(event.venue_name || event.location || event.address);
   // Подпись рубрики — ТОЛЬКО через словарь. Здесь печатался сам код, и с 07.09,
   // когда категория поехала наружу из tgevents, на карточке появилось сырое
