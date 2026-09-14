@@ -84,7 +84,8 @@ type PublicEvent struct {
 	// StartTimeKnown=false означает «дата известна, времени нет». Без этого
 	// признака полночь неотличима от настоящего начала в 00:00, а фронт
 	// печатает её как время события.
-	StartTimeKnown *bool `json:"start_time_known,omitempty"`
+	StartTimeKnown *bool   `json:"start_time_known,omitempty"`
+	CoverFit       *string `json:"cover_fit,omitempty"`
 	// VenueLat / VenueLon / VenueMetro — гео места из кураторского venue
 	// (см. internal/tgevents, миграция 008). Опциональны и у большинства
 	// событий отсутствуют: курация проставляет их вручную, и потребитель
