@@ -18,3 +18,8 @@ EventDetail shows explicit end_date, performers and offers_valid_from when
 provided, and links the native/explicit organizer URL. seo.ts uses the same
 facts for Event JSON-LD. Missing source facts stay absent; source_url is a
 publisher reference, not an organizer identity. See docs/event-structured-data.md.
+
+cover_fit=contain opts a native event into an uncropped poster and an explicit
+video player with audio controls. Other covers retain their existing motion
+behavior. Date-only native events show a calm closed-registration state after
+their calendar day; their direct URL remains available.

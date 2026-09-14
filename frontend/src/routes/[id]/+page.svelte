@@ -22,7 +22,7 @@
   // photo_url у импортированных относительный, поэтому origin обязателен:
   // og:image требует абсолютный адрес.
   const ogDescription = $derived(eventMetaDescription(data.event));
-  const foreign = $derived(Boolean(data.event.webreg_slug) || data.event.source === 'tg');
+  const foreign = $derived(Boolean(data.event.webreg_slug) || data.event.source === 'tg' || data.event.cover_fit === 'contain');
   const ogImage = $derived(
     foreign
       ? (data.event.photo_url

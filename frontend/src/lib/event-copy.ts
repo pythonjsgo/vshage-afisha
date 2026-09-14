@@ -1,21 +1,21 @@
 export type EventLocale = 'ru' | 'en';
 const copy = {
   ru: {
-    share: 'Поделиться событием', copyLink: 'Скопировать ссылку', copied: 'Ссылка скопирована',
+    share: 'Поделиться событием', copyLink: 'Скопировать ссылку', copied: 'Ссылка скопирована', watchTeaser: 'Смотреть тизер',
     telegramShare: 'Отправить друзьям в Telegram', copyFailed: 'Не удалось скопировать. Ссылка:',
     buyTicket: 'Купить билет', register: 'Зарегистрироваться', telegramRegister: 'Записаться в Telegram',
     websiteRegister: 'Регистрация на сайте', details: 'Подробнее о событии',
-    participation: 'Участие', price: 'Стоимость', free: 'Бесплатно', donation: 'Свободный взнос',
+    participation: 'Участие', price: 'Стоимость', free: 'Бесплатно', donation: 'Свободный взнос', eventPassed: 'Событие прошло. Регистрация закрыта.',
     from: 'от', organizerSite: 'Страница организатора', eventSource: 'О событии',
     ends: 'Окончание', performers: 'Участники программы', salesStart: 'Начало регистрации', when: 'Когда', where: 'Где', organizer: 'Организатор', who: 'Кто идёт', going: 'идут',
     afisha: 'Афиша', cancelled: 'Отменено', students: 'Для студентов', invite: 'По приглашению',
   },
   en: {
-    share: 'Share this event', copyLink: 'Copy link', copied: 'Link copied',
+    share: 'Share this event', copyLink: 'Copy link', copied: 'Link copied', watchTeaser: 'Watch teaser',
     telegramShare: 'Share with friends on Telegram', copyFailed: 'Could not copy. Link:',
     buyTicket: 'Buy a ticket', register: 'Register', telegramRegister: 'Register via Telegram',
     websiteRegister: 'Register on the website', details: 'Event details',
-    participation: 'Attend', price: 'Price', free: 'Free', donation: 'Optional donation',
+    participation: 'Attend', price: 'Price', free: 'Free', donation: 'Optional donation', eventPassed: 'This event has ended. Registration is closed.',
     from: 'from', organizerSite: 'Organizer page', eventSource: 'About the event',
     ends: 'Ends', performers: 'Program participants', salesStart: 'Registration opens', when: 'When', where: 'Where', organizer: 'Organizer', who: 'Who is going', going: 'going',
     afisha: 'Events', cancelled: 'Cancelled', students: 'For students', invite: 'By invitation',
