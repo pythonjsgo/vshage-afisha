@@ -32,7 +32,7 @@
   const deadlinePassed = $derived(
     event.registration_deadline ? Date.now() > new Date(event.registration_deadline).getTime() : false
   );
-  const eventStarted = $derived(Date.now() > new Date(event.start_time).getTime() + (event.start_time_known === false ? 86400000 : 0));
+  const eventStarted = $derived(!event.allow_past_registration && Date.now() > new Date(event.start_time).getTime() + (event.start_time_known === false ? 86400000 : 0));
   const registrationClosed = $derived(deadlinePassed || eventStarted);
   const registrationClosedReason = $derived(
     eventStarted

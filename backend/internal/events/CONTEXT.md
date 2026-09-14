@@ -22,3 +22,7 @@ an explicit organizer_url. Missing columns safely decode through to_jsonb.
 An external_registration_url with native registration is an announcement
 source, not a replacement registration flow. City remains free text; only
 the Moscow listing is enabled. Date-only registration closes after that day.
+
+allow_past_registration is an administrative, per-event opt-in. It bypasses
+only the start-date cutoff; publication, visibility, deadline, capacity and
+form validation still apply. Missing/false preserves existing closure rules.
