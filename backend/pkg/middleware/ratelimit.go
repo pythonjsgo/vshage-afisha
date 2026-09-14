@@ -1,9 +1,11 @@
 package middleware
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,15 +44,41 @@ func RateLimit(rps float64, burst int) func(http.Handler) http.Handler {
 				return
 			}
 			if !l.allow(key) {
-				log.Printf("webreg: rate limit hit for %s on %s", key, r.URL.Path)
-				w.Header().Set("Retry-After", "5")
+				// Retry-After считается из фактической скорости пополнения, а
+				// не константой: у /join он 1 токен за 12 минут, и «подожди
+				// пару секунд» отправляло бы человека ждать в 144 раза меньше
+				// нужного — он вернулся бы на тот же отказ и ушёл. Прибор,
+				// называющий неверное число, хуже отсутствующего.
+				wait := 5
+				if l.rps > 0 {
+					if w := int(1/l.rps + 0.5); w > wait {
+						wait = w
+					}
+				}
+				log.Printf("ratelimit: %s hit on %s, retry after %ds", key, r.URL.Path, wait)
+				w.Header().Set("Retry-After", strconv.Itoa(wait))
 				w.Header().Set("Content-Type", "application/json; charset=utf-8")
 				w.WriteHeader(http.StatusTooManyRequests)
-				_, _ = w.Write([]byte(`{"code":"rate_limited","message":"Слишком много запросов — подожди пару секунд"}`))
+				_, _ = fmt.Fprintf(w,
+					`{"code":"rate_limited","message":"Слишком часто. Попробуй через %s"}`,
+					humanWait(wait))
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+// humanWait — «через сколько» словами: человеку нужно решение «ждать или
+// уйти», а не число секунд.
+func humanWait(sec int) string {
+	switch {
+	case sec < 60:
+		return "минуту"
+	case sec < 3600:
+		return strconv.Itoa((sec+59)/60) + " мин"
+	default:
+		return "час"
 	}
 }
 

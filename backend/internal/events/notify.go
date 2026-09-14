@@ -41,6 +41,18 @@ const (
 var mskZone = time.FixedZone("MSK", 3*60*60)
 
 func enqueueNotify(ctx context.Context, tx pgx.Tx, text string) error {
+	return EnqueueTelegram(ctx, tx, text)
+}
+
+// EnqueueTelegram ставит произвольный текст в ту же очередь, что и
+// уведомления о регистрациях, и тем же INSERT'ом.
+//
+// Экспортировано ради internal/join: анкета на вход в закрытую сеть уходит
+// в тот же чат, что «Новая запись», и своя копия INSERT'а рядом разъехалась
+// бы со схемой outbox на первой же правке — ровно как ключ кэша, собранный
+// руками в трёх местах. Вызывать в транзакции самой записи: сообщение об
+// анкете, которой нет, никому не нужно, и наоборот.
+func EnqueueTelegram(ctx context.Context, tx pgx.Tx, text string) error {
 	return enqueueChannel(ctx, tx, channelTG, "", text)
 }
 

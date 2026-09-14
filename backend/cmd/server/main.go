@@ -17,12 +17,19 @@ import (
 	"github.com/pythonjsgo/vshage-afisha/internal/config"
 	"github.com/pythonjsgo/vshage-afisha/internal/events"
 	"github.com/pythonjsgo/vshage-afisha/internal/health"
+	"github.com/pythonjsgo/vshage-afisha/internal/join"
 	"github.com/pythonjsgo/vshage-afisha/internal/mail"
 	"github.com/pythonjsgo/vshage-afisha/internal/tgevents"
 	"github.com/pythonjsgo/vshage-afisha/internal/webreg"
 	"github.com/pythonjsgo/vshage-afisha/pkg/db"
 	"github.com/pythonjsgo/vshage-afisha/pkg/middleware"
 )
+
+// joinPerHour — потолок анкет с одного адреса в час (vshage.app/join).
+// Число живёт здесь, рядом с маршрутом, а не в конфиге: менять его будем по
+// факту накрутки, и тогда важно видеть его вместе с комментарием, почему
+// соседний лимит регистраций в двадцать раз шире.
+const joinPerHour = 5
 
 // randomSalt produces an ephemeral IP-hash salt when none is configured.
 func randomSalt() string {
@@ -78,6 +85,10 @@ func main() {
 			{"registration_notify_outbox", "channel", "013"},
 			{"registration_notify_outbox", "next_attempt_at", "014"},
 			{"event_registrations", "reminder_mail_at", "013"},
+			// Анкета закрытой сети: без 019 публичная ручка /api/join отдаёт
+			// 500 на каждую отправку, и первым это увидит человек, пришедший
+			// по платному объявлению.
+			{"join_requests", "consent_at", "019"},
 		} {
 			var found int
 			if err := pool.QueryRow(ctx, `
@@ -118,6 +129,12 @@ func main() {
 	defer func() { _ = submitLog.Close() }()
 	webregRepo := webreg.NewRepository(pool, ipSalt)
 	webregHandler := webreg.NewHandler(webregRepo, cfg.WebregAdminToken, submitLog)
+
+	// Анкеты на вход в закрытую сеть (vshage.app/join, трафик Яндекс.Директа).
+	// Соль хеша адреса общая с веб-регистрацией: это одна и та же задача —
+	// «один ли это отправитель», — и две разные соли сделали бы её
+	// неразрешимой между двумя формами.
+	joinHandler := join.NewHandler(join.NewRepository(pool, ipSalt))
 
 	// Студсобытия из телеграм-каналов (конвейер vshage-geo). Админ-токен
 	// общий с webreg — один админ афиши, один секрет.
@@ -175,6 +192,14 @@ func main() {
 		})
 		r.Route("/webreg/admin", webregHandler.AdminRoutes)
 
+		// Анкета закрытой сети. Лимит СВОЙ, а не общий webregLimit: там
+		// «5 в час» задушили бы поток регистраций в момент анонса, здесь
+		// наоборот — трафик платный и штучный, и пять анкет в час с одного
+		// адреса это уже не человек. Burst 5 = столько же за раз.
+		r.Route("/join", func(r chi.Router) {
+			joinHandler.Routes(r, middleware.RateLimit(joinPerHour/3600.0, joinPerHour))
+		})
+
 		// GET /api/tg-events снят вместе со страницей /uni: потребителя не
 		// осталось, а он единственный отдавал наружу структуру Card, у
 		// которой есть payload с дословным текстом чужого поста. Запрет
@@ -202,6 +227,8 @@ func main() {
 			r.Use(admin.AuthMiddleware(cfg.AdminJWTSecret))
 			r.Post("/featured", adminHandler.Feature)
 			r.Post("/unfeature", adminHandler.Unfeature)
+			// Разбор анкет: GET /api/admin/join, PATCH /api/admin/join/{id}.
+			r.Route("/join", joinHandler.AdminRoutes)
 		})
 	})
 
