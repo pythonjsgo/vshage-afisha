@@ -34,9 +34,9 @@ const selectCols = `
 	COALESCE((SELECT COUNT(*) FROM event_registrations r
 	          WHERE r.event_id = e.id AND r.status != 'cancelled'), 0),
 	COALESCE(d.registration_mode, 'auto'), d.external_registration_url, d.registration_deadline,
-	-- price_type БЕЗ подстановки «free». Колонка NOT NULL DEFAULT 'free', то
-	-- есть NULL здесь означает ровно одно: строки деталей нет вовсе, а такое
-	-- событие доска держит намеренно (см. boardBase). Подставить «free»
+	-- price_type БЕЗ подстановки «free». NULL означает неизвестную цену:
+	-- либо нет строки деталей, либо анонс не содержит условий участия (022).
+	-- Подставить «free»
 	-- значило бы от своего имени пообещать человеку бесплатный вход туда,
 	-- про что мы ничего не знаем, — и заодно напечатать offers.price: 0 в
 	-- разметке для поисковика. «Не знаю» и «бесплатно» — разные утверждения.
