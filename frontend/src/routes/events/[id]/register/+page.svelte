@@ -4,7 +4,8 @@
   import { page } from '$app/state';
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
-  import { formatEventDateLong } from '$lib/dateFormat';
+  import { formatEventDateLong, formatEventDateRange } from '$lib/dateFormat';
+  import { documentEventLocale, eventCopy } from '$lib/event-copy';
   import type { RegField, RegFieldToggle } from '$lib/types';
 
   let { data, form } = $props();
@@ -17,7 +18,7 @@
   const ogDescription = $derived(
     event.short_description?.trim() ||
       event.description?.trim().replace(/\s+/g, ' ').slice(0, 180) ||
-      [formatEventDateLong(event.start_time), event.venue_name ?? event.address ?? event.city]
+      [formatEventDateLong(event.start_time, event.start_time_known !== false), event.venue_name ?? event.address ?? event.city]
         .filter(Boolean)
         .join(' · ')
   );
@@ -31,11 +32,11 @@
   const deadlinePassed = $derived(
     event.registration_deadline ? Date.now() > new Date(event.registration_deadline).getTime() : false
   );
-  const eventStarted = $derived(Date.now() > new Date(event.start_time).getTime());
+  const eventStarted = $derived(!event.allow_past_registration && Date.now() > new Date(event.start_time).getTime() + (event.start_time_known === false ? 86400000 : 0));
   const registrationClosed = $derived(deadlinePassed || eventStarted);
   const registrationClosedReason = $derived(
     eventStarted
-      ? 'Событие уже началось. Регистрация закрыта.'
+      ? event.start_time_known === false ? eventCopy('eventPassed', documentEventLocale()) : 'Событие уже началось. Регистрация закрыта.'
       : event.registration_deadline && deadlinePassed
         ? `Дедлайн регистрации прошёл: ${formatEventDateLong(event.registration_deadline)}.`
         : 'Регистрация закрыта.'
@@ -270,7 +271,7 @@
   <nav class="back-nav"><a href={`/${event.id}`}>← СОБЫТИЕ</a></nav>
 
   <section class="hero">
-    <EventCover poster={event.photo_url} video={event.cover_video_url} eager />
+    <EventCover poster={event.photo_url} video={event.cover_fit === 'contain' ? undefined : event.cover_video_url} fit={event.cover_fit} eager />
     <div class="overlay"></div>
     <div class="hero-content">
       <div class="kicker">РЕГИСТРАЦИЯ</div>
@@ -282,7 +283,7 @@
   </section>
 
   <section class="info">
-    <div class="row"><div class="k">КОГДА</div><div class="v">{formatEventDateLong(event.start_time)}</div></div>
+    <div class="row"><div class="k">КОГДА</div><div class="v">{formatEventDateRange(event.start_time, event.end_time, event.start_time_known !== false)}</div></div>
     {#if venue}
       <div class="row"><div class="k">ГДЕ</div><div class="v">{venue}</div></div>
     {:else if event.online_url}

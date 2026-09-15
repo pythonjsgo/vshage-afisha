@@ -103,6 +103,8 @@ export interface PublicEvent {
   /** false = дата известна, времени нет (у импортированных это частый
    *  случай). Без признака полночь неотличима от начала в 00:00. */
   start_time_known?: boolean;
+  cover_fit?: 'cover' | 'contain';
+  allow_past_registration?: boolean;
   /**
    * Полоса доски: `running` — многодневная программа, которая уже открылась
    * и ещё не закрылась; `timed` — всё остальное. Решает СЕРВЕР, и выводить

@@ -18,3 +18,12 @@ EventDetail shows explicit end_date, performers and offers_valid_from when
 provided, and links the native/explicit organizer URL. seo.ts uses the same
 facts for Event JSON-LD. Missing source facts stay absent; source_url is a
 publisher reference, not an organizer identity. See docs/event-structured-data.md.
+
+cover_fit=contain opts a native event into an uncropped poster and an explicit
+video player with audio controls. Other covers retain their existing motion
+behavior. Date-only native events show a calm closed-registration state after
+their calendar day; their direct URL remains available.
+
+The admin allow_past_registration flag keeps retrospective registration open
+on the detail and form pages. AppCTA has a real App Store href; iOS taps try
+the custom scheme first and cancel the store fallback when the page hides.

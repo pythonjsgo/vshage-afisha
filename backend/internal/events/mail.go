@@ -276,6 +276,7 @@ func afterSignup(ctx context.Context, tx pgx.Tx, eventID string, form regform.Fo
 	if err := enqueueGuestMail(ctx, tx, ev, form, fields, clean, regID, status); err != nil {
 		return err
 	}
+	enqueueGroupTelegram(ctx, tx, ev, clean)
 	return enqueueOrganizerPush(ctx, tx, ev, clean.DisplayName(), taken, capacity)
 }
 
@@ -290,8 +291,11 @@ func pushTargets(ctx context.Context, tx pgx.Tx, ev mailEvent) ([]string, error)
 	// primary key и превращает поиск в чтение всей таблицы пользователей —
 	// на каждую запись, под блокировкой строки события.
 	rows, err := sub.Query(ctx, `
-		SELECT id::text FROM profiles
-		WHERE (id = NULLIF($1,'')::uuid OR is_admin) AND status = 'active'`, ev.OrganizerID)
+		SELECT p.id::text FROM profiles p
+		WHERE (p.is_admin OR (p.id = NULLIF($1,'')::uuid AND EXISTS (
+			SELECT 1 FROM events e WHERE e.id=$2
+			AND COALESCE((to_jsonb(e)->>'notify_organizer_on_registration')::boolean,false)
+		))) AND p.status = 'active'`, ev.OrganizerID, ev.ID)
 	if err != nil {
 		return nil, err
 	}

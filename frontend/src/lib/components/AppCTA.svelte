@@ -1,11 +1,15 @@
 <script lang="ts">
-  import { openInApp } from '$lib/deeplink';
+  import { APP_STORE_URL, openInApp } from '$lib/deeplink';
   let { eventId }: { eventId: string } = $props();
 </script>
 
-<button class="cta" onclick={() => openInApp(eventId)}>
+<a class="cta" href={APP_STORE_URL} onclick={(event) => {
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  openInApp(eventId);
+}}>
   ↓ ОТКРЫТЬ В ПРИЛОЖЕНИИ ВШАГЕ
-</button>
+</a>
 
 <style>
   .cta {
@@ -20,6 +24,7 @@
     font-weight: 700;
     letter-spacing: 1.5px;
     cursor: pointer;
+    text-align: center;
     transition: background var(--dur-fast);
   }
   .cta:hover { background: var(--accent-green); }
