@@ -60,6 +60,15 @@ export function formatEventDateLong(iso: string, timeKnown = true): string {
   return timeKnown ? `${date} · ${hhmm(d)}` : date;
 }
 
+/** Native events have an explicit end time; keep it visible on their signup page. */
+export function formatEventDateRange(start: string, end?: string | null, timeKnown = true): string {
+  const label = formatEventDateLong(start, timeKnown);
+  if (!end || !timeKnown) return label;
+  const from = mskParts(new Date(start));
+  const to = mskParts(new Date(end));
+  return sameDay(from, to) ? `${label}–${hhmm(to)}` : `${label} — ${formatEventDateLong(end)}`;
+}
+
 /** «до 13 СЕН» — конец многодневной программы. Без него идущая выставка
  *  читается как разовое событие сегодняшнего дня. */
 export function formatEndDate(iso: string): string {

@@ -33,9 +33,10 @@ import (
 const notifyTick = 10 * time.Second
 
 const (
-	channelTG    = "tg"
-	channelEmail = "email"
-	channelPush  = "push"
+	channelTG      = "tg"
+	channelTGGroup = "tg_group"
+	channelEmail   = "email"
+	channelPush    = "push"
 )
 
 var mskZone = time.FixedZone("MSK", 3*60*60)
@@ -216,7 +217,11 @@ func (n *notifier) drain(ctx context.Context) {
 	// свой канал, а не на всю пачку.
 	stalled := map[string]bool{}
 	for _, it := range batch {
-		if stalled[it.channel] {
+		key := it.channel
+		if it.channel == channelTGGroup {
+			key += ":" + it.recipient
+		}
+		if stalled[key] {
 			continue
 		}
 		err := n.deliver(ctx, it.channel, it.recipient, it.payload)
@@ -233,7 +238,7 @@ func (n *notifier) drain(ctx context.Context) {
 				SET attempts = attempts + 1, last_error = $2,
 				    next_attempt_at = NOW() + LEAST(attempts + 1, 30) * interval '10 seconds'
 				WHERE id = $1`, it.id, msg)
-			stalled[it.channel] = true
+			stalled[key] = true
 			continue
 		}
 		if _, err := n.pool.Exec(ctx, `
@@ -295,11 +300,32 @@ func (n *notifier) deliver(ctx context.Context, channel, recipient, payload stri
 		}
 		return n.pusher.Deliver(ctx, id, j.Title, j.Body, j.EventID)
 
-	default: // channelTG
+	case channelTGGroup:
+		var job groupTelegramJob
+		if err := json.Unmarshal([]byte(payload), &job); err != nil {
+			return fmt.Errorf("decode group notification: %w", err)
+		}
+		var current string
+		if err := n.pool.QueryRow(ctx, groupChatQuery, job.EventID).Scan(&current); err != nil {
+			return fmt.Errorf("read group notification destination: %w", err)
+		}
+		// Revoking or changing a destination also revokes queued deliveries.
+		if current == "" || current != recipient {
+			log.Print("notify: group notification skipped: destination removed or changed")
+			return nil
+		}
+		if n.botToken == "" {
+			return fmt.Errorf("telegram bot is not configured")
+		}
+		return sendTelegram(ctx, n.botToken, recipient, job.Text)
+
+	case channelTG:
 		if n.botToken == "" || n.chatID == "" {
 			return fmt.Errorf("телеграм не настроен")
 		}
 		return sendTelegram(ctx, n.botToken, n.chatID, payload)
+	default:
+		return fmt.Errorf("unknown notification channel: %s", channel)
 	}
 }
 
@@ -324,12 +350,22 @@ func sendTelegram(ctx context.Context, botToken, chatID, text string) error {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		// HTTP errors include the request URL, which contains the bot token.
+		return fmt.Errorf("telegram transport: %s", strings.ReplaceAll(err.Error(), botToken, "<token>"))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
 		return fmt.Errorf("telegram %d: %s", resp.StatusCode, string(b))
+	}
+	var result struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
+		return fmt.Errorf("decode telegram response: %w", err)
+	}
+	if !result.OK {
+		return fmt.Errorf("telegram did not accept the message")
 	}
 	return nil
 }

@@ -4,7 +4,7 @@
   import { page } from '$app/state';
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
-  import { formatEventDateLong } from '$lib/dateFormat';
+  import { formatEventDateLong, formatEventDateRange } from '$lib/dateFormat';
   import { documentEventLocale, eventCopy } from '$lib/event-copy';
   import type { RegField, RegFieldToggle } from '$lib/types';
 
@@ -283,7 +283,7 @@
   </section>
 
   <section class="info">
-    <div class="row"><div class="k">КОГДА</div><div class="v">{formatEventDateLong(event.start_time, event.start_time_known !== false)}</div></div>
+    <div class="row"><div class="k">КОГДА</div><div class="v">{formatEventDateRange(event.start_time, event.end_time, event.start_time_known !== false)}</div></div>
     {#if venue}
       <div class="row"><div class="k">ГДЕ</div><div class="v">{venue}</div></div>
     {:else if event.online_url}

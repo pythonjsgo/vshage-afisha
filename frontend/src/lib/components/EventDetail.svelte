@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { PublicEvent } from '$lib/types';
-  import { formatEventDateLong, formatEndDate, formatWhen } from '$lib/dateFormat';
+  import { formatEventDateLong, formatEventDateRange, formatEndDate, formatWhen } from '$lib/dateFormat';
   import { categoryLabel } from '$lib/taxonomy';
   import MetaPill from './MetaPill.svelte';
   import GlitchText from './GlitchText.svelte';
@@ -82,6 +82,8 @@
     <div class="row"><div class="k">{t('when')}</div><div class="v">
       {#if when}
         {when}
+      {:else if !event.source}
+        {formatEventDateRange(event.start_time, event.end_time, event.start_time_known !== false)}
       {:else}
         {formatEventDateLong(event.start_time, event.start_time_known !== false)}
         {#if event.end_time}<br />{formatEndDate(event.end_time)}{/if}

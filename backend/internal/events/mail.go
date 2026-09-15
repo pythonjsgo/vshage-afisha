@@ -276,6 +276,7 @@ func afterSignup(ctx context.Context, tx pgx.Tx, eventID string, form regform.Fo
 	if err := enqueueGuestMail(ctx, tx, ev, form, fields, clean, regID, status); err != nil {
 		return err
 	}
+	enqueueGroupTelegram(ctx, tx, ev, clean)
 	return enqueueOrganizerPush(ctx, tx, ev, clean.DisplayName(), taken, capacity)
 }
 
