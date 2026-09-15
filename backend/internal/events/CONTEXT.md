@@ -26,3 +26,8 @@ the Moscow listing is enabled. Date-only registration closes after that day.
 allow_past_registration is an administrative, per-event opt-in. It bypasses
 only the start-date cutoff; publication, visibility, deadline, capacity and
 form validation still apply. Missing/false preserves existing closure rules.
+
+Registration owner notifications require the administrative per-event flag
+`events.notify_organizer_on_registration=true`; defaults and missing metadata
+send organizer alerts only to platform admins. The appnotify sender checks the
+same condition again before delivery, including jobs queued by older producers.

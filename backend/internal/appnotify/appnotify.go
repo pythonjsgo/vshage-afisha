@@ -62,6 +62,22 @@ func (s *Sender) Deliver(ctx context.Context, profileID, title, body, eventID st
 	if profileID == "" {
 		return errors.New("appnotify: пустой profile_id")
 	}
+	// Recheck at delivery time too: queued work must not outlive a revoked
+	// event-specific opt-in, and older producers must not bypass this policy.
+	var allowed bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM profiles p WHERE p.id=$1 AND p.status='active'
+		AND (p.is_admin OR EXISTS (
+			SELECT 1 FROM events e WHERE e.id=$2 AND e.organizer_id=p.id
+			AND COALESCE((to_jsonb(e)->>'notify_organizer_on_registration')::boolean,false)
+		))
+	)`, profileID, eventID).Scan(&allowed); err != nil {
+		return fmt.Errorf("appnotify: check registration recipient: %w", err)
+	}
+	if !allowed {
+		log.Printf("appnotify: registration recipient not authorized profile=%s event=%s", profileID, eventID)
+		return nil
+	}
 	data, _ := json.Marshal(map[string]string{"type": "event", "event_id": eventID})
 
 	// Строка в ленте уведомлений — главное: она переживает выключенный APNs,

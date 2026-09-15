@@ -290,8 +290,11 @@ func pushTargets(ctx context.Context, tx pgx.Tx, ev mailEvent) ([]string, error)
 	// primary key и превращает поиск в чтение всей таблицы пользователей —
 	// на каждую запись, под блокировкой строки события.
 	rows, err := sub.Query(ctx, `
-		SELECT id::text FROM profiles
-		WHERE (id = NULLIF($1,'')::uuid OR is_admin) AND status = 'active'`, ev.OrganizerID)
+		SELECT p.id::text FROM profiles p
+		WHERE (p.is_admin OR (p.id = NULLIF($1,'')::uuid AND EXISTS (
+			SELECT 1 FROM events e WHERE e.id=$2
+			AND COALESCE((to_jsonb(e)->>'notify_organizer_on_registration')::boolean,false)
+		))) AND p.status = 'active'`, ev.OrganizerID, ev.ID)
 	if err != nil {
 		return nil, err
 	}
