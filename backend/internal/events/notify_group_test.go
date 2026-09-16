@@ -114,6 +114,14 @@ func TestGroupDeliverySQL(t *testing.T) {
 	if pending != 0 {
 		t.Fatalf("retry did not deliver: %d", pending)
 	}
+	// A positive chat ID routes the same durable job to a personal account.
+	exec(`UPDATE organizer_settings SET telegram_chat_id='882079062'`)
+	enqueue(true)
+	recipients = nil
+	n.drain(ctx)
+	if strings.Join(recipients, ",") != "882079062,owner" {
+		t.Fatalf("private destination not delivered: %v", recipients)
+	}
 	// Revocation suppresses queued group delivery without affecting the owner.
 	enqueue(true)
 	exec(`UPDATE organizer_settings SET telegram_chat_id=''`)
