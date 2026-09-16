@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { PublicEvent } from '$lib/types';
-  import { formatEventDateLong, formatEndDate, formatWhen } from '$lib/dateFormat';
+  import { formatEventDateLong, formatEventDateRange, formatEndDate, formatWhen } from '$lib/dateFormat';
   import { categoryLabel } from '$lib/taxonomy';
   import MetaPill from './MetaPill.svelte';
   import GlitchText from './GlitchText.svelte';
@@ -22,12 +22,14 @@
   const action = $derived(eventAction(event));
   const price = $derived(eventPrice(event, locale));
   const source = $derived(eventSource(event));
+  const posterCover = $derived(event.cover_fit === 'contain');
+  const pastDateOnly = $derived(!event.allow_past_registration && !event.source && event.start_time_known === false && Date.now() >= Date.parse(event.start_time) + 86400000);
   const place = $derived(event.venue_name || event.location || event.address);
   // Подпись рубрики — ТОЛЬКО через словарь. Здесь печатался сам код, и с 07.09,
   // когда категория поехала наружу из tgevents, на карточке появилось сырое
   // «CAMPUS» / «THEATRE_CINEMA». Кода вне словаря быть не должно, но если он
   // приедет — чип не рисуется вовсе: пусто честнее идентификатора.
-  const category = $derived(categoryLabel(event.category)?.toUpperCase() ?? '');
+  const category = $derived(posterCover && event.category === 'campus' ? t('students').toUpperCase() : categoryLabel(event.category)?.toUpperCase() ?? '');
   /**
    * Подпись «когда» у длящейся программы собирает formatWhen: «ИДЁТ ДО 20 СЕН»,
    * «ПОСЛЕДНИЙ ДЕНЬ», «28 СЕН — 3 ОКТ», «ИДЁТ ПОСТОЯННО». Дата начала у идущей
@@ -52,8 +54,12 @@
 </script>
 
 <article class="detail" class:cancelled>
-  <header class="cover">
-    <EventCover poster={event.photo_url} video={event.cover_video_url} eager />
+  <header class="cover" class:poster-cover={posterCover}>
+    {#if posterCover}
+      <div class="poster-media"><EventCover poster={event.photo_url} video={event.cover_video_url} eager fit="contain" playable /></div>
+    {:else}
+      <EventCover poster={event.photo_url} video={event.cover_video_url} eager />
+    {/if}
     <div class="overlay"></div>
     <nav class="back-nav"><a href="/">← {t('afisha')}</a></nav>
     <div class="hd">
@@ -61,6 +67,7 @@
       <div class="pills">
         {#if cancelled}<MetaPill text={t('cancelled')} variant="warning" />{/if}
         {#if category}<MetaPill text={category} />{/if}
+        {#if event.city && !['Москва', 'msk'].includes(event.city)}<MetaPill text={event.city} />{/if}
         {#if event.max_attendees}<MetaPill text={`LIMIT ${event.max_attendees}`} />{/if}
         {#if accessLabel}<MetaPill text={accessLabel} />{/if}
       </div>
@@ -75,6 +82,8 @@
     <div class="row"><div class="k">{t('when')}</div><div class="v">
       {#if when}
         {when}
+      {:else if !event.source}
+        {formatEventDateRange(event.start_time, event.end_time, event.start_time_known !== false)}
       {:else}
         {formatEventDateLong(event.start_time, event.start_time_known !== false)}
         {#if event.end_time}<br />{formatEndDate(event.end_time)}{/if}
@@ -119,11 +128,13 @@
       <div class="booking">
         {#if price}<div class="booking-price"><span>{t('price')}</span><strong>{price}</strong></div>{/if}
         {#if action}<div class="booking-action">
+          {#if pastDateOnly}<p>{t('eventPassed')}</p>{:else}
           <a class="register-btn" href={action.href} target={action.external ? '_blank' : undefined}
             rel={action.external ? 'noreferrer' : undefined}>{t(action.label)} {action.external ? '↗' : '→'}</a>
+          {/if}
           {#if source && !(action.label === 'details' && action.href === source.href)}
             <a class="source-link" href={source.href} target="_blank" rel="noreferrer">
-              {t(event.source_url ? 'eventSource' : 'organizerSite')} · {source.host}
+              {t(event.source_url && !event.source ? 'details' : event.source_url ? 'eventSource' : 'organizerSite')} · {source.host}
             </a>
           {/if}
         </div>{/if}
@@ -156,6 +167,11 @@
     display: flex; flex-direction: column; justify-content: space-between;
   }
   .overlay { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,0.06) 20%, rgba(0,0,0,0.9) 100%); }
+  .cover.poster-cover { padding: 0; min-height: 0; background: var(--bg); }
+  .poster-media { position: relative; aspect-ratio: 4 / 5; max-height: 600px; }
+  .poster-cover .overlay { display: none; }
+  .poster-cover .back-nav { position: absolute; top: 20px; left: 20px; background: #0a0a0acc; padding: 8px; }
+  .poster-cover .hd { padding: clamp(20px, 3vw, 40px); }
   .back-nav, .hd { position: relative; z-index: 1; }
   .back-nav a { color: var(--fg); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; }
   .hd h1 { max-width: 900px; font-family: var(--font-display); font-size: clamp(36px, 5.8vw, 64px); line-height: 1; text-transform: uppercase; font-weight: 400; letter-spacing: -1px; }

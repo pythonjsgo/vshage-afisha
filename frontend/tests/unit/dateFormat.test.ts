@@ -1,5 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { formatEventDate, formatEventDateLong, formatEndDate, formatWhen } from '../../src/lib/dateFormat';
+import { formatEventDate, formatEventDateLong, formatEventDateRange, formatEndDate, formatWhen } from '../../src/lib/dateFormat';
+
+describe('native event time range', () => {
+  it('shows the approved end time in Moscow on server and client', () => {
+    expect(formatEventDateRange('2026-09-19T15:10:00Z', '2026-09-19T18:00:00Z')).toBe('19 СЕН · 18:10–21:00');
+    expect(formatEventDateRange('2026-09-19T15:10:00Z', '2026-09-19T22:00:00Z')).toBe('19 СЕН · 18:10 — 20 СЕН · 01:00');
+  });
+  it('preserves missing times and missing end dates', () => {
+    expect(formatEventDateRange('2026-09-19T15:10:00Z')).toBe('19 СЕН · 18:10');
+    expect(formatEventDateRange('2026-09-19T15:10:00Z', '2026-09-19T18:00:00Z', false)).toBe('19 СЕН');
+  });
+});
 
 /**
  * Даты в фикстурах — с ЯВНЫМ смещением. Прежние строки вида

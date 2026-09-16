@@ -16,3 +16,18 @@ See docs/active-events.md and the real PostgreSQL expiry_sql_test.go cases.
 Native organizer URLs use the provider's public slug and the environment's
 MyVshage hostname. Four new metadata fields are optional and omitted when
 unknown; existing response keys, visibility and time fields are unchanged.
+
+Native details can opt into start_time_known=false, cover_fit=contain and
+an explicit organizer_url. Missing columns safely decode through to_jsonb.
+An external_registration_url with native registration is an announcement
+source, not a replacement registration flow. City remains free text; only
+the Moscow listing is enabled. Date-only registration closes after that day.
+
+allow_past_registration is an administrative, per-event opt-in. It bypasses
+only the start-date cutoff; publication, visibility, deadline, capacity and
+form validation still apply. Missing/false preserves existing closure rules.
+
+Registration owner notifications require the administrative per-event flag
+`events.notify_organizer_on_registration=true`; defaults and missing metadata
+send organizer alerts only to platform admins. The appnotify sender checks the
+same condition again before delivery, including jobs queued by older producers.

@@ -1,27 +1,38 @@
-// Живая карточка в App Store (id 6760569940). До 30.08 здесь стояла заглушка
-// `idTODO`: кнопка «Открыть в приложении» уводила всех, у кого приложение не
-// установлено, на несуществующий адрес — то есть работала ровно наоборот.
-const APP_STORE_URL = 'https://apps.apple.com/kz/app/vshage/id6760569940';
+import { APP_STORE_URL } from './join';
+export { APP_STORE_URL } from './join';
+
 export function eventDeeplink(eventId: string): string {
   return `vshage://event/${encodeURIComponent(eventId)}`;
 }
 
+let cancelPending: (() => void) | undefined;
+
 export function openInApp(eventId: string) {
-  const scheme = eventDeeplink(eventId);
-  const fallback = APP_STORE_URL;
-  const start = Date.now();
+  cancelPending?.();
+  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (!ios) {
+    window.location.href = APP_STORE_URL;
+    return;
+  }
+
+  const cleanup = () => {
+    clearTimeout(timer);
+    document.removeEventListener('visibilitychange', onVisibility);
+    window.removeEventListener('pagehide', cleanup);
+    cancelPending = undefined;
+  };
+  const onVisibility = () => {
+    if (document.visibilityState === 'hidden') cleanup();
+  };
   const timer = setTimeout(() => {
-    // still here after 1.5s → app not installed, go to App Store
-    if (Date.now() - start < 2500) {
-      window.location.href = fallback;
-    }
+    const visible = document.visibilityState !== 'hidden';
+    cleanup();
+    if (visible) window.location.href = APP_STORE_URL;
   }, 1500);
-  window.location.href = scheme;
-  // Note: if app installed, page will blur (visibility) and timer cleared
-  document.addEventListener('visibilitychange', function onHide() {
-    if (document.visibilityState === 'hidden') {
-      clearTimeout(timer);
-      document.removeEventListener('visibilitychange', onHide);
-    }
-  });
+  cancelPending = cleanup;
+  // Register before launching: an installed app can hide the page immediately.
+  document.addEventListener('visibilitychange', onVisibility);
+  window.addEventListener('pagehide', cleanup);
+  window.location.href = eventDeeplink(eventId);
 }
